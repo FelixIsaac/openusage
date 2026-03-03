@@ -107,7 +107,29 @@
       const stateDbPath = stateDbPaths[i]
       const sqliteAccessToken = readStateValue(ctx, stateDbPath, "cursorAuth/accessToken")
       const sqliteRefreshToken = readStateValue(ctx, stateDbPath, "cursorAuth/refreshToken")
+    const sqliteMembershipTypeRaw = readStateValue(ctx, stateDbPath, "cursorAuth/stripeMembershipType")
+    const sqliteMembershipType = typeof sqliteMembershipTypeRaw === "string"
+      ? sqliteMembershipTypeRaw.trim().toLowerCase()
+      : null
+
+    const keychainAccessToken = readKeychainValue(ctx, KEYCHAIN_ACCESS_TOKEN_SERVICE)
+    const keychainRefreshToken = readKeychainValue(ctx, KEYCHAIN_REFRESH_TOKEN_SERVICE)
+
+    const sqliteSubject = getTokenSubject(ctx, sqliteAccessToken)
+    const keychainSubject = getTokenSubject(ctx, keychainAccessToken)
+    const hasDifferentSubjects = !!sqliteSubject && !!keychainSubject && sqliteSubject !== keychainSubject
+    const sqliteLooksFree = sqliteMembershipType === "free"
+
       if (sqliteAccessToken || sqliteRefreshToken) {
+      if ((keychainAccessToken || keychainRefreshToken) && sqliteLooksFree && hasDifferentSubjects) {
+        ctx.host.log.info("sqlite auth looks free and differs from keychain account; preferring keychain token")
+        return {
+          accessToken: keychainAccessToken,
+          refreshToken: keychainRefreshToken,
+          source: "keychain",
+        }
+      }
+
         return {
           accessToken: sqliteAccessToken,
           refreshToken: sqliteRefreshToken,
@@ -115,23 +137,29 @@
           stateDbPath: stateDbPath,
         }
       }
-    }
+    
 
-    const keychainAccessToken = readKeychainValue(ctx, KEYCHAIN_ACCESS_TOKEN_SERVICE)
-    const keychainRefreshToken = readKeychainValue(ctx, KEYCHAIN_REFRESH_TOKEN_SERVICE)
-    if (keychainAccessToken || keychainRefreshToken) {
-      return {
-        accessToken: keychainAccessToken,
-        refreshToken: keychainRefreshToken,
-        source: "keychain",
+      if (keychainAccessToken || keychainRefreshToken) {
+        return {
+          accessToken: keychainAccessToken,
+          refreshToken: keychainRefreshToken,
+          source: "keychain",
+        }
       }
     }
-
     return {
       accessToken: null,
       refreshToken: null,
       source: null,
     }
+  }
+
+  function getTokenSubject(ctx, token) {
+    if (!token) return null
+    const payload = ctx.jwt.decodePayload(token)
+    if (!payload || typeof payload.sub !== "string") return null
+    const subject = payload.sub.trim()
+    return subject || null
   }
 
   function persistAccessToken(ctx, authState, accessToken) {
@@ -481,9 +509,18 @@
       ? planName.toLowerCase()
       : ""
 
-    // Enterprise and some Team request-based accounts return no planUsage from
-    // the Connect API. Detect them and use the REST usage API instead.
-    const needsRequestBasedFallback = usage.enabled !== false && !usage.planUsage && (
+    const hasPlanUsage = !!usage.planUsage
+    const hasPlanUsageLimit = hasPlanUsage &&
+      typeof usage.planUsage.limit === "number" &&
+      Number.isFinite(usage.planUsage.limit)
+    const planUsageLimitMissing = hasPlanUsage && !hasPlanUsageLimit
+    const hasTotalUsagePercent = hasPlanUsage &&
+      typeof usage.planUsage.totalPercentUsed === "number" &&
+      Number.isFinite(usage.planUsage.totalPercentUsed)
+
+    // Enterprise and some Team request-based accounts can return no planUsage
+    // or a planUsage object without limit from the Connect API.
+    const needsRequestBasedFallback = usage.enabled !== false && (!hasPlanUsage || planUsageLimitMissing) && (
       normalizedPlanName === "enterprise" ||
       normalizedPlanName === "team"
     )
@@ -497,12 +534,21 @@
     }
 
     const needsFallbackWithoutPlanInfo = usage.enabled !== false &&
-      !usage.planUsage &&
+      (!hasPlanUsage || planUsageLimitMissing) &&
       !normalizedPlanName &&
       planInfoUnavailable
     if (needsFallbackWithoutPlanInfo) {
       ctx.host.log.info("plan info unavailable with missing planUsage, attempting REST usage API fallback")
       return buildUnknownRequestBasedResult(ctx, accessToken, planName)
+    }
+
+    if (usage.enabled !== false && planUsageLimitMissing && !hasTotalUsagePercent) {
+      ctx.host.log.warn("planUsage.limit missing, attempting REST usage API fallback")
+      try {
+        return buildUnknownRequestBasedResult(ctx, accessToken, planName)
+      } catch (e) {
+        ctx.host.log.warn("REST usage fallback unavailable: " + String(e))
+      }
     }
 
     // Team plans may omit `enabled` even with valid plan usage data.
@@ -552,36 +598,21 @@
       }))
     }
 
-    const su = usage.spendLimitUsage
-    const isTeamAccount = (
-      normalizedPlanName === "team" ||
-      (su && su.limitType === "team") ||
-      (su && typeof su.pooledLimit === "number")
-    )
-    const hasFiniteLimit = typeof pu.limit === "number" && Number.isFinite(pu.limit)
-    const hasFinitePercent = Number.isFinite(pu.totalPercentUsed)
-
-    // Free/individual plans can be percent-only; team rendering still needs dollars.
-    if (isTeamAccount && !hasFiniteLimit) {
+    // Total usage (always present) - fallback primary metric
+    if (!hasPlanUsageLimit && !hasTotalUsagePercent) {
       throw "Total usage limit missing from API response."
     }
-    if (!isTeamAccount && !hasFiniteLimit && !hasFinitePercent) {
-      throw "Total usage limit missing from API response."
-    }
-
-    const planUsed = hasFiniteLimit
-      ? (typeof pu.totalSpend === "number" ? pu.totalSpend : pu.limit - (pu.remaining ?? 0))
-      : null
-    const computedPercentUsed = hasFiniteLimit
-      ? (pu.limit > 0 ? (planUsed / pu.limit) * 100 : 0)
-      : null
-    const totalUsagePercent = hasFinitePercent
+    const planUsed = hasPlanUsageLimit
+      ? (typeof pu.totalSpend === "number"
+        ? pu.totalSpend
+        : pu.limit - (pu.remaining ?? 0))
+      : 0
+    const computedPercentUsed = hasPlanUsageLimit && pu.limit > 0
+      ? (planUsed / pu.limit) * 100
+      : 0
+    const totalUsagePercent = hasTotalUsagePercent
       ? pu.totalPercentUsed
       : computedPercentUsed
-
-    if (!isTeamAccount && !hasFiniteLimit && hasFinitePercent) {
-      ctx.host.log.info("total usage limit missing; using totalPercentUsed for individual account")
-    }
 
     // Calculate billing cycle period duration
     var billingPeriodMs = 30 * 24 * 60 * 60 * 1000 // 30 days default
@@ -591,7 +622,18 @@
       billingPeriodMs = cycleEnd - cycleStart // already in ms
     }
 
+    const su = usage.spendLimitUsage
+    const isTeamAccount = (
+      normalizedPlanName === "team" ||
+      (su && su.limitType === "team") ||
+      (su && typeof su.pooledLimit === "number")
+    )
+
     if (isTeamAccount) {
+      if (!hasPlanUsageLimit) {
+        ctx.host.log.warn("team-inferred account missing planUsage.limit, attempting REST usage API fallback")
+        return buildUnknownRequestBasedResult(ctx, accessToken, planName)
+      }
       lines.push(ctx.line.progress({
         label: "Total usage",
         used: ctx.fmt.dollars(planUsed),
