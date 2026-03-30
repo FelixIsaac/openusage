@@ -17,13 +17,15 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Mutex, OnceLock};
 
-const WHITELISTED_ENV_VARS: [&str; 6] = [
+const WHITELISTED_ENV_VARS: [&str; 8] = [
     "CODEX_HOME",
     "ZAI_API_KEY",
     "GLM_API_KEY",
     "MINIMAX_API_KEY",
     "MINIMAX_API_TOKEN",
     "MINIMAX_CN_API_KEY",
+    "SYNTHETIC_API_KEY",
+    "PI_CODING_AGENT_DIR",
 ];
 const PLUGIN_SHELL_SETTINGS_KEY: &str = "windowsPluginShellEnabled";
 #[cfg(windows)]
