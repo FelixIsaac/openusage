@@ -1,5 +1,6 @@
 #[cfg(target_os = "macos")]
 mod app_nap;
+mod config;
 mod local_http_api;
 mod panel;
 mod plugin_engine;
@@ -453,6 +454,9 @@ pub fn run() {
 
             let version = app.package_info().version.to_string();
             log::info!("UsageTray v{} starting", version);
+            // Load config early (lazy init via OnceLock, zero-cost after)
+            let _proxy = config::get_resolved_proxy();
+
 
             let app_data_dir = app.path().app_data_dir().expect("no app data dir");
             let resource_dir = app.path().resource_dir().expect("no resource dir");
