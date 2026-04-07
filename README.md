@@ -33,6 +33,7 @@ UsageTray lives in your Windows tray and shows usage data for supported AI codin
 - Single-popup tray UI
 - Local plugin-based provider architecture
 - [Local HTTP API](docs/local-http-api.md) on `127.0.0.1:6736`
+- **[Proxy support](docs/proxy.md).** Route provider HTTP requests through a SOCKS5 or HTTP proxy.
 
 ## Supported Providers
 
