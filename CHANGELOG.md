@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.6.14
+
+### New Features
+- Add per-provider overview line filters in Settings so the main tab can hide selected model lines
+- Add Kiro provider support and upstream provider/docs sync, including Synthetic coverage
+- Add optional SOCKS5/HTTP proxy support for provider and plugin HTTP requests
+
+### Bug Fixes
+- Prefer the correct Cursor auth source for enterprise/team accounts and handle missing limit payloads
+- Fix Factory `auth.v2` encrypted session handling and refreshed credential persistence
+- Keep Windsurf quota data visible when extra usage balance is absent
+
+### Chores
+- Update README, provider docs, and plugin host API crypto docs
+- Bump `typescript`, `lucide-react`, `uuid`, and `tokio`
+
+---
+
+### Changelog
+
+**Full Changelog**: [v0.6.13...v0.6.14](https://github.com/Rana-Faraz/usage-tray-windows/compare/v0.6.13...v0.6.14)
+
 ## 0.6.13
 
 ### New Features
