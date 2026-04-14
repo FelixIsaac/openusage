@@ -1,7 +1,7 @@
 (function () {
-  const LEGACY_AUTH_PATHS = ["~/.factory/auth.encrypted", "~/.factory/auth.json"]
   const AUTH_V2_PATH = "~/.factory/auth.v2.file"
   const AUTH_V2_KEY_PATH = "~/.factory/auth.v2.key"
+  const LEGACY_AUTH_PATHS = ["~/.factory/auth.encrypted", "~/.factory/auth.json"]
   const KEYCHAIN_SERVICES = ["Factory Token", "Factory token", "Factory Auth", "Droid Auth"]
   const WORKOS_CLIENT_ID = "client_01HNM792M5G5G1A2THWPXKFMXB"
   const WORKOS_AUTH_URL = "https://api.workos.com/user_management/authenticate"
@@ -93,7 +93,41 @@
     return null
   }
 
+  function loadAuthFromV2File(ctx) {
+    if (!ctx.host.crypto || typeof ctx.host.crypto.decryptAes256Gcm !== "function") {
+      return null
+    }
+    if (!ctx.host.fs.exists(AUTH_V2_PATH) || !ctx.host.fs.exists(AUTH_V2_KEY_PATH)) {
+      return null
+    }
+
+    try {
+      const envelope = ctx.host.fs.readText(AUTH_V2_PATH)
+      const key = ctx.host.fs.readText(AUTH_V2_KEY_PATH)
+      const decrypted = ctx.host.crypto.decryptAes256Gcm(envelope, key)
+      const auth = parseAuthPayload(ctx, decrypted, { allowPartial: true })
+      if (!auth) {
+        ctx.host.log.warn("auth file exists but has no valid auth payload: " + AUTH_V2_PATH)
+        return null
+      }
+      ctx.host.log.info("auth loaded from file: " + AUTH_V2_PATH)
+      return {
+        auth,
+        source: "file-v2",
+        authPath: AUTH_V2_PATH,
+        authKey: key,
+        keychainService: null,
+      }
+    } catch (e) {
+      ctx.host.log.warn("auth file read failed: " + String(e))
+      return null
+    }
+  }
+
   function loadAuthFromFiles(ctx) {
+    const v2Auth = loadAuthFromV2File(ctx)
+    if (v2Auth) return v2Auth
+
     for (const authPath of LEGACY_AUTH_PATHS) {
       if (!ctx.host.fs.exists(authPath)) continue
 
@@ -112,49 +146,6 @@
     }
 
     return null
-  }
-
-  function loadAuthFromV2File(ctx) {
-    if (!ctx.host.crypto || typeof ctx.host.crypto.aes256GcmDecrypt !== "function") {
-      return null
-    }
-    if (!ctx.host.fs.exists(AUTH_V2_PATH) || !ctx.host.fs.exists(AUTH_V2_KEY_PATH)) {
-      return null
-    }
-
-    try {
-      const encryptedText = String(ctx.host.fs.readText(AUTH_V2_PATH) || "").trim()
-      const keyB64 = String(ctx.host.fs.readText(AUTH_V2_KEY_PATH) || "").trim()
-      const parts = encryptedText.split(":")
-      if (parts.length !== 3 || !keyB64) {
-        ctx.host.log.warn("auth.v2.file has invalid format")
-        return null
-      }
-
-      const decrypted = ctx.host.crypto.aes256GcmDecrypt({
-        keyB64,
-        ivB64: parts[0],
-        tagB64: parts[1],
-        ciphertextB64: parts[2],
-      })
-      const auth = parseAuthPayload(ctx, decrypted, { allowPartial: true })
-      if (!auth) {
-        ctx.host.log.warn("auth.v2.file exists but has no valid auth payload")
-        return null
-      }
-
-      ctx.host.log.info("auth loaded from file: " + AUTH_V2_PATH)
-      return {
-        auth,
-        source: "v2-file",
-        authPath: AUTH_V2_PATH,
-        authKeyPath: AUTH_V2_KEY_PATH,
-        keychainService: null,
-      }
-    } catch (e) {
-      ctx.host.log.warn("auth.v2.file read failed: " + String(e))
-      return null
-    }
   }
 
   function loadAuthFromKeychain(ctx) {
@@ -187,12 +178,15 @@
     const fileAuth = loadAuthFromFiles(ctx)
     if (fileAuth) return fileAuth
 
-    const fileV2Auth = loadAuthFromV2File(ctx)
-    if (fileV2Auth) return fileV2Auth
-
     const keychainAuth = loadAuthFromKeychain(ctx)
     if (keychainAuth) return keychainAuth
 
+    if (!ctx.host.fs.exists(AUTH_V2_PATH)) {
+      ctx.host.log.warn("auth file not found: " + AUTH_V2_PATH)
+    }
+    if (!ctx.host.fs.exists(AUTH_V2_KEY_PATH)) {
+      ctx.host.log.warn("auth file not found: " + AUTH_V2_KEY_PATH)
+    }
     for (const authPath of LEGACY_AUTH_PATHS.concat([AUTH_V2_PATH])) {
       if (!ctx.host.fs.exists(authPath)) {
         ctx.host.log.warn("auth file not found: " + authPath)
@@ -207,33 +201,19 @@
     if (!auth) return false
 
     try {
-      if (authState.source === "file" && authState.authPath) {
-        ctx.host.fs.writeText(authState.authPath, JSON.stringify(auth, null, 2))
+      if (authState.source === "file-v2" && authState.authPath && authState.authKey) {
+        if (!ctx.host.crypto || typeof ctx.host.crypto.encryptAes256Gcm !== "function") {
+          ctx.host.log.warn("auth persistence skipped: unsupported source " + authState.source)
+          return false
+        }
+        const envelope = ctx.host.crypto.encryptAes256Gcm(JSON.stringify(auth, null, 2), authState.authKey)
+        ctx.host.fs.writeText(authState.authPath, envelope)
         ctx.host.log.info("auth file updated: " + authState.authPath)
         return true
       }
 
-      if (
-        authState.source === "v2-file" &&
-        authState.authPath &&
-        authState.authKeyPath &&
-        ctx.host.crypto &&
-        typeof ctx.host.crypto.aes256GcmEncrypt === "function"
-      ) {
-        const keyB64 = String(ctx.host.fs.readText(authState.authKeyPath) || "").trim()
-        if (!keyB64) {
-          ctx.host.log.warn("auth.v2 key missing: " + authState.authKeyPath)
-          return false
-        }
-
-        const encrypted = ctx.host.crypto.aes256GcmEncrypt({
-          keyB64,
-          plaintext: JSON.stringify(auth),
-        })
-        ctx.host.fs.writeText(
-          authState.authPath,
-          [encrypted.ivB64, encrypted.tagB64, encrypted.ciphertextB64].join(":")
-        )
+      if (authState.source === "file" && authState.authPath) {
+        ctx.host.fs.writeText(authState.authPath, JSON.stringify(auth, null, 2))
         ctx.host.log.info("auth file updated: " + authState.authPath)
         return true
       }
@@ -257,14 +237,22 @@
     }
   }
 
-  function needsRefresh(ctx, accessToken, nowMs) {
+  function getAccessTokenExpiryMs(ctx, accessToken) {
     const payload = ctx.jwt.decodePayload(accessToken)
-    const expiresAtMs = payload && typeof payload.exp === "number" ? payload.exp * 1000 : null
+    return payload && typeof payload.exp === "number" ? payload.exp * 1000 : null
+  }
+
+  function needsRefresh(ctx, accessToken, nowMs) {
     return ctx.util.needsRefreshByExpiry({
       nowMs,
-      expiresAtMs,
+      expiresAtMs: getAccessTokenExpiryMs(ctx, accessToken),
       bufferMs: TOKEN_REFRESH_THRESHOLD_MS,
     })
+  }
+
+  function canUseExistingAccessToken(ctx, accessToken, nowMs) {
+    const expiresAtMs = getAccessTokenExpiryMs(ctx, accessToken)
+    return typeof expiresAtMs === "number" && nowMs < expiresAtMs
   }
 
   function refreshToken(ctx, authState) {
@@ -359,11 +347,16 @@
     const nowMs = Date.now()
     if (needsRefresh(ctx, accessToken, nowMs)) {
       ctx.host.log.info("token near expiry, refreshing")
-      const refreshed = refreshToken(ctx, authState)
-      if (refreshed) {
-        accessToken = refreshed
-      } else {
-        ctx.host.log.warn("proactive refresh failed, trying with existing token")
+      try {
+        const refreshed = refreshToken(ctx, authState)
+        if (refreshed) {
+          accessToken = refreshed
+        } else {
+          ctx.host.log.warn("proactive refresh failed, trying with existing token")
+        }
+      } catch (e) {
+        if (!canUseExistingAccessToken(ctx, accessToken, nowMs)) throw e
+        ctx.host.log.warn("proactive refresh failed but access token is still valid, trying existing token")
       }
     }
 

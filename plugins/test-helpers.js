@@ -1,7 +1,33 @@
+import crypto from "node:crypto"
 import { vi } from "vitest"
 
 export const makeCtx = () => {
   const files = new Map()
+
+  const decryptEnvelope = (envelope, keyB64) => {
+    const parts = String(envelope || "").trim().split(":")
+    if (parts.length !== 3) throw new Error("invalid AES-GCM envelope")
+    const key = Buffer.from(String(keyB64 || "").trim(), "base64")
+    const iv = Buffer.from(parts[0], "base64")
+    const tag = Buffer.from(parts[1], "base64")
+    const ciphertext = Buffer.from(parts[2], "base64")
+    const decipher = crypto.createDecipheriv("aes-256-gcm", key, iv)
+    decipher.setAuthTag(tag)
+    return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString("utf8")
+  }
+
+  const encryptEnvelope = (plaintext, keyB64, ivB64) => {
+    const key = Buffer.from(String(keyB64 || "").trim(), "base64")
+    const iv = ivB64 ? Buffer.from(String(ivB64), "base64") : crypto.randomBytes(16)
+    const cipher = crypto.createCipheriv("aes-256-gcm", key, iv)
+    const ciphertext = Buffer.concat([cipher.update(String(plaintext), "utf8"), cipher.final()])
+    const tag = cipher.getAuthTag()
+    return {
+      ivB64: iv.toString("base64"),
+      tagB64: tag.toString("base64"),
+      ciphertextB64: ciphertext.toString("base64"),
+    }
+  }
 
   const ctx = {
     nowIso: "2026-02-02T00:00:00.000Z",
@@ -46,8 +72,18 @@ export const makeCtx = () => {
         deleteGenericPassword: vi.fn(),
       },
       crypto: {
-        aes256GcmDecrypt: vi.fn(),
-        aes256GcmEncrypt: vi.fn(),
+        decryptAes256Gcm: vi.fn((envelope, keyB64) => decryptEnvelope(envelope, keyB64)),
+        encryptAes256Gcm: vi.fn((plaintext, keyB64) => {
+          const encrypted = encryptEnvelope(plaintext, keyB64)
+          return `${encrypted.ivB64}:${encrypted.tagB64}:${encrypted.ciphertextB64}`
+        }),
+        aes256GcmDecrypt: vi.fn((req) => {
+          return decryptEnvelope(
+            [req.ivB64, req.tagB64, req.ciphertextB64].join(":"),
+            req.keyB64
+          )
+        }),
+        aes256GcmEncrypt: vi.fn((req) => encryptEnvelope(req.plaintext, req.keyB64, req.ivB64)),
       },
       windows: {
         knownPath: vi.fn(() => null),

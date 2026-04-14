@@ -1,11 +1,13 @@
 use super::keychain;
-use aes_gcm::AesGcm;
 use aes_gcm::aead::consts::U16;
 use aes_gcm::aead::generic_array::GenericArray;
-use aes_gcm::aead::{Aead, KeyInit};
-use aes_gcm::aes::Aes256;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use aes_gcm::{
+    AesGcm, Nonce,
+    aead::{Aead, KeyInit, OsRng, rand_core::RngCore},
+    aes::Aes256,
+};
 use rquickjs::{Ctx, Exception, Function, Object};
 use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
@@ -15,13 +17,15 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Mutex, OnceLock};
 
-const WHITELISTED_ENV_VARS: [&str; 6] = [
+const WHITELISTED_ENV_VARS: [&str; 8] = [
     "CODEX_HOME",
     "ZAI_API_KEY",
     "GLM_API_KEY",
     "MINIMAX_API_KEY",
     "MINIMAX_API_TOKEN",
     "MINIMAX_CN_API_KEY",
+    "SYNTHETIC_API_KEY",
+    "PI_CODING_AGENT_DIR",
 ];
 const PLUGIN_SHELL_SETTINGS_KEY: &str = "windowsPluginShellEnabled";
 #[cfg(windows)]
@@ -555,6 +559,8 @@ fn redact_url(url: &str) -> String {
         "userid",
         "account_id",
         "accountid",
+        "profilearn",
+        "profile_arn",
         "email",
         "login",
     ];
@@ -634,6 +640,8 @@ fn redact_body(body: &str) -> String {
         "userId",
         "account_id",
         "accountId",
+        "profile_arn",
+        "profileArn",
         "email",
         "login",
         "analytics_tracking_id",
@@ -673,6 +681,97 @@ fn redact_log_message(msg: &str) -> String {
             .to_string();
     }
     result
+}
+
+fn decrypt_aes_256_gcm_envelope(envelope: &str, key_b64: &str) -> Result<String, String> {
+    let trimmed_envelope = envelope.trim();
+    let trimmed_key = key_b64.trim();
+    let parts: Vec<&str> = trimmed_envelope.split(':').collect();
+    if parts.len() != 3 {
+        return Err("invalid AES-GCM envelope".to_string());
+    }
+
+    let key = BASE64_STANDARD
+        .decode(trimmed_key)
+        .map_err(|e| format!("invalid base64 key: {}", e))?;
+    if key.len() != 32 {
+        return Err(format!(
+            "invalid AES-256 key length: expected 32 bytes, got {}",
+            key.len()
+        ));
+    }
+
+    let iv = BASE64_STANDARD
+        .decode(parts[0])
+        .map_err(|e| format!("invalid base64 iv: {}", e))?;
+    if iv.len() != 16 {
+        return Err(format!(
+            "invalid AES-GCM iv length: expected 16 bytes, got {}",
+            iv.len()
+        ));
+    }
+
+    let tag = BASE64_STANDARD
+        .decode(parts[1])
+        .map_err(|e| format!("invalid base64 auth tag: {}", e))?;
+    if tag.len() != 16 {
+        return Err(format!(
+            "invalid AES-GCM auth tag length: expected 16 bytes, got {}",
+            tag.len()
+        ));
+    }
+
+    let ciphertext = BASE64_STANDARD
+        .decode(parts[2])
+        .map_err(|e| format!("invalid base64 ciphertext: {}", e))?;
+
+    type Aes256Gcm16 = AesGcm<Aes256, U16>;
+    let cipher =
+        Aes256Gcm16::new_from_slice(&key).map_err(|e| format!("decrypt init failed: {}", e))?;
+    let nonce = Nonce::<U16>::from_slice(&iv);
+
+    let mut ciphertext_and_tag = ciphertext;
+    ciphertext_and_tag.extend_from_slice(&tag);
+    let plaintext = cipher
+        .decrypt(nonce, ciphertext_and_tag.as_ref())
+        .map_err(|_| "decrypt finalize failed".to_string())?;
+
+    String::from_utf8(plaintext).map_err(|e| format!("decrypted payload is not UTF-8: {}", e))
+}
+
+fn encrypt_aes_256_gcm_envelope(plaintext: &str, key_b64: &str) -> Result<String, String> {
+    let trimmed_key = key_b64.trim();
+    let key = BASE64_STANDARD
+        .decode(trimmed_key)
+        .map_err(|e| format!("invalid base64 key: {}", e))?;
+    if key.len() != 32 {
+        return Err(format!(
+            "invalid AES-256 key length: expected 32 bytes, got {}",
+            key.len()
+        ));
+    }
+
+    type Aes256Gcm16 = AesGcm<Aes256, U16>;
+    let cipher =
+        Aes256Gcm16::new_from_slice(&key).map_err(|e| format!("encrypt init failed: {}", e))?;
+    let mut iv = [0_u8; 16];
+    OsRng.fill_bytes(&mut iv);
+    let nonce = Nonce::<U16>::from_slice(&iv);
+    let ciphertext_and_tag = cipher
+        .encrypt(nonce, plaintext.as_bytes())
+        .map_err(|_| "encrypt finalize failed".to_string())?;
+    if ciphertext_and_tag.len() < 16 {
+        return Err("encrypted payload missing auth tag".to_string());
+    }
+    let split_at = ciphertext_and_tag.len() - 16;
+    let (ciphertext, tag) = ciphertext_and_tag.split_at(split_at);
+
+    Ok(format!(
+        "{}:{}:{}",
+        BASE64_STANDARD.encode(iv),
+        BASE64_STANDARD.encode(tag),
+        BASE64_STANDARD.encode(ciphertext)
+    ))
 }
 
 pub fn inject_host_api<'js>(
@@ -876,7 +975,17 @@ fn inject_http<'js>(ctx: &Ctx<'js>, host: &Object<'js>, plugin_id: &str) -> rqui
                 let timeout_ms = req.timeout_ms.unwrap_or(10_000);
                 let mut builder = reqwest::blocking::Client::builder()
                     .timeout(std::time::Duration::from_millis(timeout_ms))
+                    .connect_timeout(std::time::Duration::from_millis(timeout_ms))
                     .redirect(reqwest::redirect::Policy::none());
+
+                // Apply pre-resolved proxy (localhost bypass already configured)
+                if let Some(resolved) = crate::config::get_resolved_proxy() {
+                    builder = builder.proxy(resolved.proxy.clone());
+                    log::debug!("[http] proxy active");
+                } else {
+                    log::debug!("[http] proxy not used");
+                }
+
                 if req.dangerously_ignore_tls.unwrap_or(false) {
                     builder = builder.danger_accept_invalid_certs(true);
                 }
@@ -1020,20 +1129,47 @@ pub fn patch_crypto_wrapper(ctx: &rquickjs::Ctx<'_>) -> rquickjs::Result<()> {
         (function() {
             var decryptRaw = __openusage_ctx.host.crypto._aes256GcmDecryptRaw;
             var encryptRaw = __openusage_ctx.host.crypto._aes256GcmEncryptRaw;
-            __openusage_ctx.host.crypto.aes256GcmDecrypt = function(req) {
+            __openusage_ctx.host.crypto.decryptAes256Gcm = function(envelope, keyB64) {
+                var parts = String(envelope || "").trim().split(":");
+                if (parts.length !== 3) {
+                    throw new Error("invalid AES-GCM envelope");
+                }
                 return decryptRaw(JSON.stringify({
-                    keyB64: req.keyB64,
-                    ivB64: req.ivB64,
-                    tagB64: req.tagB64,
-                    ciphertextB64: req.ciphertextB64
+                    keyB64: keyB64,
+                    ivB64: parts[0],
+                    tagB64: parts[1],
+                    ciphertextB64: parts[2]
                 }));
             };
-            __openusage_ctx.host.crypto.aes256GcmEncrypt = function(req) {
-                return JSON.parse(encryptRaw(JSON.stringify({
-                    keyB64: req.keyB64,
-                    plaintext: req.plaintext,
-                    ivB64: req.ivB64 || null
+            __openusage_ctx.host.crypto.encryptAes256Gcm = function(plaintext, keyB64) {
+                var response = JSON.parse(encryptRaw(JSON.stringify({
+                    keyB64: keyB64,
+                    plaintext: plaintext,
+                    ivB64: null
                 })));
+                return [response.ivB64, response.tagB64, response.ciphertextB64].join(":");
+            };
+            __openusage_ctx.host.crypto.aes256GcmDecrypt = function(req) {
+                return __openusage_ctx.host.crypto.decryptAes256Gcm(
+                    [req.ivB64, req.tagB64, req.ciphertextB64].join(":"),
+                    req.keyB64
+                );
+            };
+            __openusage_ctx.host.crypto.aes256GcmEncrypt = function(req) {
+                if (req.ivB64) {
+                    return JSON.parse(encryptRaw(JSON.stringify({
+                        keyB64: req.keyB64,
+                        plaintext: req.plaintext,
+                        ivB64: req.ivB64
+                    })));
+                }
+                var envelope = __openusage_ctx.host.crypto.encryptAes256Gcm(req.plaintext, req.keyB64);
+                var parts = envelope.split(":");
+                return {
+                    ivB64: parts[0],
+                    tagB64: parts[1],
+                    ciphertextB64: parts[2]
+                };
             };
         })();
         "#
@@ -2520,6 +2656,33 @@ mod tests {
     use super::*;
     use rquickjs::{Context, Function, Object, Runtime};
 
+    fn encrypt_aes_256_gcm_envelope_for_test(key: &[u8], plaintext: &str) -> String {
+        let iv = [7_u8; 16];
+        type Aes256Gcm16 = AesGcm<Aes256, U16>;
+        let cipher = Aes256Gcm16::new_from_slice(key).expect("encrypt init");
+        let nonce = Nonce::<U16>::from_slice(&iv);
+        let ciphertext_and_tag = cipher
+            .encrypt(nonce, plaintext.as_bytes())
+            .expect("encrypt finalize");
+        let split_at = ciphertext_and_tag.len() - 16;
+        let (ciphertext, tag) = ciphertext_and_tag.split_at(split_at);
+
+        format!(
+            "{}:{}:{}",
+            BASE64_STANDARD.encode(iv),
+            BASE64_STANDARD.encode(tag),
+            BASE64_STANDARD.encode(ciphertext)
+        )
+    }
+
+    fn node_generated_aes_256_gcm_vector_for_test() -> (&'static str, &'static str, &'static str) {
+        (
+            "CwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCws=",
+            "BwcHBwcHBwcHBwcHBwcHBw==:yFbCs4LOJ0aj9NPNf5pfVA==:7PKjtOdATLClvaWrMw0b0M8Nov4KPhxwQX4hdczqQlcZi9Zhi6DjAoK+WolvMwuhPIk=",
+            r#"{"access_token":"token","refresh_token":"refresh"}"#,
+        )
+    }
+
     #[test]
     fn last_non_empty_trimmed_line_uses_final_value_when_stdout_is_noisy() {
         let stdout = "banner line\nanother message\n  sk-test-key-12345  \n";
@@ -2532,6 +2695,100 @@ mod tests {
         let stdout = "  \n\n\t\n";
         let value = last_non_empty_trimmed_line(stdout);
         assert!(value.is_none());
+    }
+
+    #[test]
+    fn decrypt_aes_256_gcm_envelope_round_trips_plaintext() {
+        let key = [11_u8; 32];
+        let key_b64 = BASE64_STANDARD.encode(key);
+        let plaintext = r#"{"access_token":"token","refresh_token":"refresh"}"#;
+        let envelope = encrypt_aes_256_gcm_envelope_for_test(&key, plaintext);
+
+        let decrypted =
+            decrypt_aes_256_gcm_envelope(&envelope, &key_b64).expect("decrypt envelope");
+
+        assert_eq!(decrypted, plaintext);
+    }
+
+    #[test]
+    fn encrypt_aes_256_gcm_envelope_round_trips_plaintext() {
+        let key = [21_u8; 32];
+        let key_b64 = BASE64_STANDARD.encode(key);
+        let plaintext = r#"{"access_token":"token-2","refresh_token":"refresh-2"}"#;
+
+        let envelope = encrypt_aes_256_gcm_envelope(plaintext, &key_b64).expect("encrypt envelope");
+        let decrypted =
+            decrypt_aes_256_gcm_envelope(&envelope, &key_b64).expect("decrypt envelope");
+
+        assert_eq!(decrypted, plaintext);
+    }
+
+    #[test]
+    fn decrypt_aes_256_gcm_envelope_rejects_invalid_component_lengths() {
+        let key_b64 = BASE64_STANDARD.encode([9_u8; 32]);
+        let short_key_b64 = BASE64_STANDARD.encode([7_u8; 31]);
+        let iv_b64 = BASE64_STANDARD.encode([1_u8; 15]);
+        let tag_b64 = BASE64_STANDARD.encode([2_u8; 16]);
+        let ciphertext_b64 = BASE64_STANDARD.encode([3_u8; 8]);
+
+        let key_err =
+            decrypt_aes_256_gcm_envelope("AQ==:AQ==:AQ==", &short_key_b64).expect_err("key length");
+        assert!(key_err.contains("expected 32 bytes"));
+
+        let iv_err = decrypt_aes_256_gcm_envelope(
+            &format!("{}:{}:{}", iv_b64, tag_b64, ciphertext_b64),
+            &key_b64,
+        )
+        .expect_err("iv length");
+        assert!(iv_err.contains("iv length"));
+
+        let short_tag_b64 = BASE64_STANDARD.encode([2_u8; 15]);
+        let tag_err = decrypt_aes_256_gcm_envelope(
+            &format!(
+                "{}:{}:{}",
+                BASE64_STANDARD.encode([1_u8; 16]),
+                short_tag_b64,
+                ciphertext_b64
+            ),
+            &key_b64,
+        )
+        .expect_err("tag length");
+        assert!(tag_err.contains("auth tag length"));
+    }
+
+    #[test]
+    fn crypto_api_exposes_decrypt() {
+        let rt = Runtime::new().expect("runtime");
+        let ctx = Context::full(&rt).expect("context");
+        ctx.with(|ctx| {
+            let app_data = std::env::temp_dir();
+            inject_host_api(&ctx, "test", &app_data, "0.0.0").expect("inject host api");
+            patch_crypto_wrapper(&ctx).expect("patch crypto wrapper");
+            let globals = ctx.globals();
+            let probe_ctx: Object = globals.get("__openusage_ctx").expect("probe ctx");
+            let host: Object = probe_ctx.get("host").expect("host");
+            let crypto: Object = host.get("crypto").expect("crypto");
+            let _decrypt: Function = crypto.get("decryptAes256Gcm").expect("decryptAes256Gcm");
+            let _encrypt: Function = crypto.get("encryptAes256Gcm").expect("encryptAes256Gcm");
+        });
+    }
+
+    #[test]
+    fn crypto_api_decrypts_node_generated_envelope_from_js() {
+        let (key_b64, envelope, expected_plaintext) = node_generated_aes_256_gcm_vector_for_test();
+        let rt = Runtime::new().expect("runtime");
+        let ctx = Context::full(&rt).expect("context");
+        ctx.with(|ctx| {
+            let app_data = std::env::temp_dir();
+            inject_host_api(&ctx, "test", &app_data, "0.0.0").expect("inject host api");
+            patch_crypto_wrapper(&ctx).expect("patch crypto wrapper");
+            let js_expr = format!(
+                r#"__openusage_ctx.host.crypto.decryptAes256Gcm("{}", "{}")"#,
+                envelope, key_b64
+            );
+            let decrypted: String = ctx.eval(js_expr).expect("js decrypt");
+            assert_eq!(decrypted, expected_plaintext);
+        });
     }
 
     #[test]
@@ -2693,6 +2950,22 @@ mod tests {
     }
 
     #[test]
+    fn redact_url_redacts_profile_arn_query_param() {
+        let url = "https://q.us-east-1.amazonaws.com/getUsageLimits?profileArn=arn:aws:codewhisperer:us-east-1:699475941385:profile/EHGA3GRVQMUK&origin=AI_EDITOR";
+        let redacted = redact_url(url);
+        assert!(
+            !redacted.contains("699475941385"),
+            "profileArn should be redacted, got: {}",
+            redacted
+        );
+        assert!(
+            redacted.contains("origin=AI_EDITOR"),
+            "non-sensitive params should remain visible, got: {}",
+            redacted
+        );
+    }
+
+    #[test]
     fn redact_body_redacts_jwt() {
         let body = r#"{"token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"}"#;
         let redacted = redact_body(body);
@@ -2771,6 +3044,22 @@ mod tests {
         assert!(
             redacted.contains("acct...cdef"),
             "accountId should show first4...last4, got: {}",
+            redacted
+        );
+    }
+
+    #[test]
+    fn redact_body_redacts_profile_arn_fields() {
+        let body = r#"{"profileArn":"arn:aws:codewhisperer:us-east-1:699475941385:profile/EHGA3GRVQMUK","profile_arn":"arn:aws:codewhisperer:us-east-1:699475941385:profile/EHGA3GRVQMUK"}"#;
+        let redacted = redact_body(body);
+        assert!(
+            !redacted.contains("699475941385"),
+            "profile arn should be redacted, got: {}",
+            redacted
+        );
+        assert!(
+            redacted.contains("arn:...QMUK"),
+            "profile arn should use first4...last4 redaction, got: {}",
             redacted
         );
     }

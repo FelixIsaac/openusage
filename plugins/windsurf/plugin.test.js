@@ -320,7 +320,25 @@ describe("windsurf plugin", () => {
     expect(result.lines.find((line) => line.label === "Weekly quota")).toBeTruthy()
     expect(result.lines.find((line) => line.label === "Extra usage balance")).toBeUndefined()
   })
+  it("renders quota lines when Windsurf omits extra usage balance", async () => {
+    const ctx = makeCtx()
+    setupCloudMock(ctx, {
+      stableAuth: "sk-ws-01-stable",
+      stableResponse: {
+        status: 200,
+        bodyText: JSON.stringify(makeQuotaResponse({ overageBalanceMicros: undefined })),
+      },
+    })
 
+    const plugin = await loadPlugin()
+    const result = plugin.probe(ctx)
+
+    expect(result.plan).toBe("Teams")
+    expect(result.lines).toHaveLength(2)
+    expect(result.lines.find((line) => line.label === "Daily quota")?.used).toBe(0)
+    expect(result.lines.find((line) => line.label === "Weekly quota")?.used).toBe(0)
+    expect(result.lines.find((line) => line.label === "Extra usage balance")).toBeUndefined()
+  })
   it("falls back to Unknown plan when planInfo is null", async () => {
     const ctx = makeCtx()
     setupCloudMock(ctx, {
