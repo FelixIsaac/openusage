@@ -1129,20 +1129,47 @@ pub fn patch_crypto_wrapper(ctx: &rquickjs::Ctx<'_>) -> rquickjs::Result<()> {
         (function() {
             var decryptRaw = __openusage_ctx.host.crypto._aes256GcmDecryptRaw;
             var encryptRaw = __openusage_ctx.host.crypto._aes256GcmEncryptRaw;
-            __openusage_ctx.host.crypto.aes256GcmDecrypt = function(req) {
+            __openusage_ctx.host.crypto.decryptAes256Gcm = function(envelope, keyB64) {
+                var parts = String(envelope || "").trim().split(":");
+                if (parts.length !== 3) {
+                    throw new Error("invalid AES-GCM envelope");
+                }
                 return decryptRaw(JSON.stringify({
-                    keyB64: req.keyB64,
-                    ivB64: req.ivB64,
-                    tagB64: req.tagB64,
-                    ciphertextB64: req.ciphertextB64
+                    keyB64: keyB64,
+                    ivB64: parts[0],
+                    tagB64: parts[1],
+                    ciphertextB64: parts[2]
                 }));
             };
-            __openusage_ctx.host.crypto.aes256GcmEncrypt = function(req) {
-                return JSON.parse(encryptRaw(JSON.stringify({
-                    keyB64: req.keyB64,
-                    plaintext: req.plaintext,
-                    ivB64: req.ivB64 || null
+            __openusage_ctx.host.crypto.encryptAes256Gcm = function(plaintext, keyB64) {
+                var response = JSON.parse(encryptRaw(JSON.stringify({
+                    keyB64: keyB64,
+                    plaintext: plaintext,
+                    ivB64: null
                 })));
+                return [response.ivB64, response.tagB64, response.ciphertextB64].join(":");
+            };
+            __openusage_ctx.host.crypto.aes256GcmDecrypt = function(req) {
+                return __openusage_ctx.host.crypto.decryptAes256Gcm(
+                    [req.ivB64, req.tagB64, req.ciphertextB64].join(":"),
+                    req.keyB64
+                );
+            };
+            __openusage_ctx.host.crypto.aes256GcmEncrypt = function(req) {
+                if (req.ivB64) {
+                    return JSON.parse(encryptRaw(JSON.stringify({
+                        keyB64: req.keyB64,
+                        plaintext: req.plaintext,
+                        ivB64: req.ivB64
+                    })));
+                }
+                var envelope = __openusage_ctx.host.crypto.encryptAes256Gcm(req.plaintext, req.keyB64);
+                var parts = envelope.split(":");
+                return {
+                    ivB64: parts[0],
+                    tagB64: parts[1],
+                    ciphertextB64: parts[2]
+                };
             };
         })();
         "#
@@ -2736,6 +2763,7 @@ mod tests {
         ctx.with(|ctx| {
             let app_data = std::env::temp_dir();
             inject_host_api(&ctx, "test", &app_data, "0.0.0").expect("inject host api");
+            patch_crypto_wrapper(&ctx).expect("patch crypto wrapper");
             let globals = ctx.globals();
             let probe_ctx: Object = globals.get("__openusage_ctx").expect("probe ctx");
             let host: Object = probe_ctx.get("host").expect("host");
@@ -2753,6 +2781,7 @@ mod tests {
         ctx.with(|ctx| {
             let app_data = std::env::temp_dir();
             inject_host_api(&ctx, "test", &app_data, "0.0.0").expect("inject host api");
+            patch_crypto_wrapper(&ctx).expect("patch crypto wrapper");
             let js_expr = format!(
                 r#"__openusage_ctx.host.crypto.decryptAes256Gcm("{}", "{}")"#,
                 envelope, key_b64

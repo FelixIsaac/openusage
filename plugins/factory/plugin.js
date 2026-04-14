@@ -148,49 +148,6 @@
     return null
   }
 
-  function loadAuthFromV2File(ctx) {
-    if (!ctx.host.crypto || typeof ctx.host.crypto.aes256GcmDecrypt !== "function") {
-      return null
-    }
-    if (!ctx.host.fs.exists(AUTH_V2_PATH) || !ctx.host.fs.exists(AUTH_V2_KEY_PATH)) {
-      return null
-    }
-
-    try {
-      const encryptedText = String(ctx.host.fs.readText(AUTH_V2_PATH) || "").trim()
-      const keyB64 = String(ctx.host.fs.readText(AUTH_V2_KEY_PATH) || "").trim()
-      const parts = encryptedText.split(":")
-      if (parts.length !== 3 || !keyB64) {
-        ctx.host.log.warn("auth.v2.file has invalid format")
-        return null
-      }
-
-      const decrypted = ctx.host.crypto.aes256GcmDecrypt({
-        keyB64,
-        ivB64: parts[0],
-        tagB64: parts[1],
-        ciphertextB64: parts[2],
-      })
-      const auth = parseAuthPayload(ctx, decrypted, { allowPartial: true })
-      if (!auth) {
-        ctx.host.log.warn("auth.v2.file exists but has no valid auth payload")
-        return null
-      }
-
-      ctx.host.log.info("auth loaded from file: " + AUTH_V2_PATH)
-      return {
-        auth,
-        source: "v2-file",
-        authPath: AUTH_V2_PATH,
-        authKeyPath: AUTH_V2_KEY_PATH,
-        keychainService: null,
-      }
-    } catch (e) {
-      ctx.host.log.warn("auth.v2.file read failed: " + String(e))
-      return null
-    }
-  }
-
   function loadAuthFromKeychain(ctx) {
     if (!ctx.host.keychain || typeof ctx.host.keychain.readGenericPassword !== "function") {
       return null
@@ -220,9 +177,6 @@
   function loadAuth(ctx) {
     const fileAuth = loadAuthFromFiles(ctx)
     if (fileAuth) return fileAuth
-
-    const fileV2Auth = loadAuthFromV2File(ctx)
-    if (fileV2Auth) return fileV2Auth
 
     const keychainAuth = loadAuthFromKeychain(ctx)
     if (keychainAuth) return keychainAuth
@@ -260,31 +214,6 @@
 
       if (authState.source === "file" && authState.authPath) {
         ctx.host.fs.writeText(authState.authPath, JSON.stringify(auth, null, 2))
-        ctx.host.log.info("auth file updated: " + authState.authPath)
-        return true
-      }
-
-      if (
-        authState.source === "v2-file" &&
-        authState.authPath &&
-        authState.authKeyPath &&
-        ctx.host.crypto &&
-        typeof ctx.host.crypto.aes256GcmEncrypt === "function"
-      ) {
-        const keyB64 = String(ctx.host.fs.readText(authState.authKeyPath) || "").trim()
-        if (!keyB64) {
-          ctx.host.log.warn("auth.v2 key missing: " + authState.authKeyPath)
-          return false
-        }
-
-        const encrypted = ctx.host.crypto.aes256GcmEncrypt({
-          keyB64,
-          plaintext: JSON.stringify(auth),
-        })
-        ctx.host.fs.writeText(
-          authState.authPath,
-          [encrypted.ivB64, encrypted.tagB64, encrypted.ciphertextB64].join(":")
-        )
         ctx.host.log.info("auth file updated: " + authState.authPath)
         return true
       }
