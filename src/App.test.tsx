@@ -429,7 +429,7 @@ describe("App", () => {
   })
 
   it("skips saving settings when already normalized", async () => {
-    state.loadPluginSettingsMock.mockResolvedValueOnce({ order: ["a", "b"], disabled: [] })
+    state.loadPluginSettingsMock.mockResolvedValueOnce({ order: ["a", "b"], disabled: [], disabledOverviewLabels: {} })
     render(<App />)
     await waitFor(() => expect(state.invokeMock).toHaveBeenCalledWith("list_plugins"))
     expect((await screen.findAllByText("Alpha")).length).toBeGreaterThan(0)
@@ -465,7 +465,7 @@ describe("App", () => {
       }
       return null
     })
-    state.loadPluginSettingsMock.mockResolvedValueOnce({ order: ["a"], disabled: [] })
+    state.loadPluginSettingsMock.mockResolvedValueOnce({ order: ["a"], disabled: [], disabledOverviewLabels: {} })
 
     render(<App />)
     await waitFor(() => expect(state.startBatchMock).toHaveBeenCalled())
@@ -503,7 +503,7 @@ describe("App", () => {
       }
       return null
     })
-    state.loadPluginSettingsMock.mockResolvedValueOnce({ order: ["a", "b"], disabled: [] })
+    state.loadPluginSettingsMock.mockResolvedValueOnce({ order: ["a", "b"], disabled: [], disabledOverviewLabels: {} })
 
     render(<App />)
     await waitFor(() => expect(state.startBatchMock).toHaveBeenCalled())
@@ -537,7 +537,7 @@ describe("App", () => {
       }
       return null
     })
-    state.loadPluginSettingsMock.mockResolvedValueOnce({ order: ["a", "b"], disabled: [] })
+    state.loadPluginSettingsMock.mockResolvedValueOnce({ order: ["a", "b"], disabled: [], disabledOverviewLabels: {} })
 
     render(<App />)
     await waitFor(() => expect(state.startBatchMock).toHaveBeenCalled())
@@ -573,7 +573,7 @@ describe("App", () => {
       }
       return null
     })
-    state.loadPluginSettingsMock.mockResolvedValueOnce({ order: ["a", "b"], disabled: [] })
+    state.loadPluginSettingsMock.mockResolvedValueOnce({ order: ["a", "b"], disabled: [], disabledOverviewLabels: {} })
 
     render(<App />)
     await waitFor(() => expect(state.startBatchMock).toHaveBeenCalled())
@@ -628,7 +628,7 @@ describe("App", () => {
       }
       return null
     })
-    state.loadPluginSettingsMock.mockResolvedValueOnce({ order: ["a", "b"], disabled: [] })
+    state.loadPluginSettingsMock.mockResolvedValueOnce({ order: ["a", "b"], disabled: [], disabledOverviewLabels: {} })
 
     render(<App />)
     await waitFor(() => expect(state.startBatchMock).toHaveBeenCalled())
@@ -948,7 +948,7 @@ describe("App", () => {
   })
 
   it("reloads plugin from sidebar context menu", async () => {
-    state.loadPluginSettingsMock.mockResolvedValueOnce({ order: ["a", "b"], disabled: [] })
+    state.loadPluginSettingsMock.mockResolvedValueOnce({ order: ["a", "b"], disabled: [], disabledOverviewLabels: {} })
     render(<App />)
     await waitFor(() => expect(state.startBatchMock).toHaveBeenCalled())
     state.probeHandlers?.onResult({
@@ -970,7 +970,7 @@ describe("App", () => {
   })
 
   it("respects manual refresh cooldown for sidebar context menu reload", async () => {
-    state.loadPluginSettingsMock.mockResolvedValueOnce({ order: ["a", "b"], disabled: [] })
+    state.loadPluginSettingsMock.mockResolvedValueOnce({ order: ["a", "b"], disabled: [], disabledOverviewLabels: {} })
     render(<App />)
     await waitFor(() => expect(state.startBatchMock).toHaveBeenCalled())
     state.probeHandlers?.onResult({
@@ -1043,7 +1043,7 @@ describe("App", () => {
   })
 
   it("removes plugin from sidebar context menu", async () => {
-    state.loadPluginSettingsMock.mockResolvedValueOnce({ order: ["a", "b"], disabled: [] })
+    state.loadPluginSettingsMock.mockResolvedValueOnce({ order: ["a", "b"], disabled: [], disabledOverviewLabels: {} })
     render(<App />)
     await waitFor(() => expect(state.startBatchMock).toHaveBeenCalled())
     state.startBatchMock.mockClear()
@@ -1054,14 +1054,14 @@ describe("App", () => {
     removeAction()
 
     await waitFor(() =>
-      expect(state.savePluginSettingsMock).toHaveBeenCalledWith({ order: ["a", "b"], disabled: ["b"] })
+      expect(state.savePluginSettingsMock).toHaveBeenCalledWith({ order: ["a", "b"], disabled: ["b"], disabledOverviewLabels: {} })
     )
     expect(state.trackMock).toHaveBeenCalledWith("provider_toggled", { provider_id: "b", enabled: "false" })
     expect(state.startBatchMock).not.toHaveBeenCalled()
   })
 
   it("ignores removing an already disabled plugin from context menu", async () => {
-    state.loadPluginSettingsMock.mockResolvedValueOnce({ order: ["a", "b"], disabled: [] })
+    state.loadPluginSettingsMock.mockResolvedValueOnce({ order: ["a", "b"], disabled: [], disabledOverviewLabels: {} })
     render(<App />)
     await waitFor(() => expect(state.startBatchMock).toHaveBeenCalled())
     state.trackMock.mockClear()
@@ -1070,7 +1070,7 @@ describe("App", () => {
     const removeAction = await triggerPluginContextAction("Beta", "b", "remove")
     removeAction()
     await waitFor(() =>
-      expect(state.savePluginSettingsMock).toHaveBeenCalledWith({ order: ["a", "b"], disabled: ["b"] })
+      expect(state.savePluginSettingsMock).toHaveBeenCalledWith({ order: ["a", "b"], disabled: ["b"], disabledOverviewLabels: {} })
     )
     await waitFor(() =>
       expect(screen.queryByRole("button", { name: "Beta" })).not.toBeInTheDocument()
@@ -1084,7 +1084,7 @@ describe("App", () => {
   })
 
   it("returns to home when removing the active plugin from context menu", async () => {
-    state.loadPluginSettingsMock.mockResolvedValueOnce({ order: ["a"], disabled: [] })
+    state.loadPluginSettingsMock.mockResolvedValueOnce({ order: ["a"], disabled: [], disabledOverviewLabels: {} })
     render(<App />)
     await waitFor(() => expect(state.startBatchMock).toHaveBeenCalled())
     state.savePluginSettingsMock.mockClear()
@@ -1103,7 +1103,7 @@ describe("App", () => {
   })
 
   it("shows empty state when all plugins disabled", async () => {
-    state.loadPluginSettingsMock.mockResolvedValueOnce({ order: ["a", "b"], disabled: ["a", "b"] })
+    state.loadPluginSettingsMock.mockResolvedValueOnce({ order: ["a", "b"], disabled: ["a", "b"], disabledOverviewLabels: {} })
     render(<App />)
     await screen.findByText("No providers enabled")
     expect(screen.getByText("Paused")).toBeInTheDocument()
@@ -1134,7 +1134,7 @@ describe("App", () => {
 
   it("handles enable toggle failures", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {})
-    state.loadPluginSettingsMock.mockResolvedValueOnce({ order: ["a", "b"], disabled: ["b"] })
+    state.loadPluginSettingsMock.mockResolvedValueOnce({ order: ["a", "b"], disabled: ["b"], disabledOverviewLabels: {} })
     state.startBatchMock
       .mockResolvedValueOnce(["a"])
       .mockRejectedValueOnce(new Error("enable fail"))
@@ -1151,7 +1151,7 @@ describe("App", () => {
   })
 
   it("enables disabled plugin and starts batch", async () => {
-    state.loadPluginSettingsMock.mockResolvedValueOnce({ order: ["a", "b"], disabled: ["b"] })
+    state.loadPluginSettingsMock.mockResolvedValueOnce({ order: ["a", "b"], disabled: ["b"], disabledOverviewLabels: {} })
     render(<App />)
     const settingsButtons = await screen.findAllByRole("button", { name: "Settings" })
     await userEvent.click(settingsButtons[0])
@@ -1194,7 +1194,7 @@ describe("App", () => {
   })
 
   it("logs when saving plugin order fails", async () => {
-    state.loadPluginSettingsMock.mockResolvedValueOnce({ order: ["a", "b"], disabled: [] })
+    state.loadPluginSettingsMock.mockResolvedValueOnce({ order: ["a", "b"], disabled: [], disabledOverviewLabels: {} })
     state.savePluginSettingsMock.mockRejectedValueOnce(new Error("save order"))
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {})
     render(<App />)
@@ -1233,7 +1233,7 @@ describe("App", () => {
   })
 
   it("coalesces pending tray icon timers on multiple settings changes", async () => {
-    state.loadPluginSettingsMock.mockResolvedValueOnce({ order: ["a", "b"], disabled: [] })
+    state.loadPluginSettingsMock.mockResolvedValueOnce({ order: ["a", "b"], disabled: [], disabledOverviewLabels: {} })
     render(<App />)
     const settingsButtons = await screen.findAllByRole("button", { name: "Settings" })
     await userEvent.click(settingsButtons[0])
@@ -1290,7 +1290,7 @@ describe("App", () => {
 
   it("sets next update to null when changing interval with all plugins disabled", async () => {
     // All plugins disabled
-    state.loadPluginSettingsMock.mockResolvedValueOnce({ order: ["a", "b"], disabled: ["a", "b"] })
+    state.loadPluginSettingsMock.mockResolvedValueOnce({ order: ["a", "b"], disabled: ["a", "b"], disabledOverviewLabels: {} })
     render(<App />)
 
     // Go to settings
@@ -1306,7 +1306,7 @@ describe("App", () => {
   it("covers interval change branch when plugins exist", async () => {
     // This test ensures the interval change logic is exercised with enabled plugins
     // to cover the if branch (enabledIds.length > 0 sets nextAt)
-    state.loadPluginSettingsMock.mockResolvedValueOnce({ order: ["a", "b"], disabled: [] })
+    state.loadPluginSettingsMock.mockResolvedValueOnce({ order: ["a", "b"], disabled: [], disabledOverviewLabels: {} })
     render(<App />)
 
     const settingsButtons = await screen.findAllByRole("button", { name: "Settings" })
@@ -1321,7 +1321,7 @@ describe("App", () => {
   it("fires auto-update interval and schedules next", async () => {
     vi.useFakeTimers()
     state.loadAutoUpdateIntervalMock.mockResolvedValueOnce(5)
-    state.loadPluginSettingsMock.mockResolvedValueOnce({ order: ["a"], disabled: [] })
+    state.loadPluginSettingsMock.mockResolvedValueOnce({ order: ["a"], disabled: [], disabledOverviewLabels: {} })
 
     render(<App />)
 
@@ -1347,7 +1347,7 @@ describe("App", () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {})
 
     state.loadAutoUpdateIntervalMock.mockResolvedValueOnce(5)
-    state.loadPluginSettingsMock.mockResolvedValueOnce({ order: ["a"], disabled: [] })
+    state.loadPluginSettingsMock.mockResolvedValueOnce({ order: ["a"], disabled: [], disabledOverviewLabels: {} })
     // First call succeeds (initial batch), subsequent calls fail
     state.startBatchMock
       .mockResolvedValueOnce(["a"])
@@ -1400,7 +1400,7 @@ describe("App", () => {
   })
 
   it("refreshes all enabled providers when clicking next update label", async () => {
-    state.loadPluginSettingsMock.mockResolvedValueOnce({ order: ["a", "b"], disabled: [] })
+    state.loadPluginSettingsMock.mockResolvedValueOnce({ order: ["a", "b"], disabled: [], disabledOverviewLabels: {} })
     render(<App />)
     await waitFor(() => expect(state.startBatchMock).toHaveBeenCalled())
     state.probeHandlers?.onResult({
@@ -1429,7 +1429,7 @@ describe("App", () => {
   })
 
   it("ignores repeated refresh-all clicks while providers are already refreshing", async () => {
-    state.loadPluginSettingsMock.mockResolvedValueOnce({ order: ["a", "b"], disabled: [] })
+    state.loadPluginSettingsMock.mockResolvedValueOnce({ order: ["a", "b"], disabled: [], disabledOverviewLabels: {} })
     render(<App />)
     await waitFor(() => expect(state.startBatchMock).toHaveBeenCalled())
     state.probeHandlers?.onResult({
@@ -1464,7 +1464,7 @@ describe("App", () => {
   it("does not leak manual refresh cooldown state when refresh-all start fails", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {})
     try {
-      state.loadPluginSettingsMock.mockResolvedValueOnce({ order: ["a"], disabled: [] })
+      state.loadPluginSettingsMock.mockResolvedValueOnce({ order: ["a"], disabled: [], disabledOverviewLabels: {} })
       render(<App />)
       await waitFor(() => expect(state.startBatchMock).toHaveBeenCalled())
       state.probeHandlers?.onResult({
@@ -1704,7 +1704,7 @@ describe("App", () => {
         }
         return null
       })
-      state.loadPluginSettingsMock.mockResolvedValueOnce({ order: ["a"], disabled: [] })
+      state.loadPluginSettingsMock.mockResolvedValueOnce({ order: ["a"], disabled: [], disabledOverviewLabels: {} })
       state.renderTrayBarsIconMock
         .mockReturnValueOnce(firstRender)
         .mockResolvedValueOnce({})
@@ -1767,7 +1767,7 @@ describe("App", () => {
         }
         return null
       })
-      state.loadPluginSettingsMock.mockResolvedValueOnce({ order: ["a"], disabled: [] })
+      state.loadPluginSettingsMock.mockResolvedValueOnce({ order: ["a"], disabled: [], disabledOverviewLabels: {} })
 
       const { unmount } = render(<App />)
       await vi.waitFor(() => expect(state.startBatchMock).toHaveBeenCalled())
@@ -1810,7 +1810,7 @@ describe("App", () => {
         }
         return null
       })
-      state.loadPluginSettingsMock.mockResolvedValueOnce({ order: ["a"], disabled: [] })
+      state.loadPluginSettingsMock.mockResolvedValueOnce({ order: ["a"], disabled: [], disabledOverviewLabels: {} })
 
       render(<App />)
       await vi.waitFor(() => expect(state.startBatchMock).toHaveBeenCalled())

@@ -20,6 +20,7 @@ describe("useSettingsPluginList", () => {
     const pluginSettings: PluginSettings = {
       order: ["codex", "missing", "cursor"],
       disabled: ["cursor"],
+      disabledOverviewLabels: {},
     }
 
     const { result } = renderHook(() =>
@@ -33,8 +34,8 @@ describe("useSettingsPluginList", () => {
     )
 
     expect(result.current).toEqual([
-      { id: "codex", name: "Codex", enabled: true },
-      { id: "cursor", name: "Cursor", enabled: false },
+      { id: "codex", name: "Codex", enabled: true, lines: [], disabledOverviewLabels: [] },
+      { id: "cursor", name: "Cursor", enabled: false, lines: [], disabledOverviewLabels: [] },
     ])
   })
 

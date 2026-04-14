@@ -70,13 +70,14 @@ describe("settings", () => {
     await expect(loadPluginSettings()).resolves.toEqual({
       order: ["a"],
       disabled: [],
+      disabledOverviewLabels: {},
     })
   })
 
   it("saves settings", async () => {
     const settings = { order: ["a"], disabled: ["b"] }
     await savePluginSettings(settings)
-    await expect(loadPluginSettings()).resolves.toEqual(settings)
+    await expect(loadPluginSettings()).resolves.toEqual({ ...settings, disabledOverviewLabels: {} })
   })
 
   it("normalizes order + disabled against known plugins", () => {
@@ -88,7 +89,7 @@ describe("settings", () => {
       { order: ["b", "b", "c"], disabled: ["c", "a"] },
       plugins
     )
-    expect(normalized).toEqual({ order: ["b", "a"], disabled: ["a"] })
+    expect(normalized).toEqual({ order: ["b", "a"], disabled: ["a"], disabledOverviewLabels: {} })
   })
 
   it("auto-disables new non-default plugins", () => {
@@ -100,6 +101,17 @@ describe("settings", () => {
     const result = normalizePluginSettings({ order: [], disabled: [] }, plugins)
     expect(result.order).toEqual(["claude", "copilot", "windsurf"])
     expect(result.disabled).toEqual(["copilot", "windsurf"])
+  })
+
+  it("normalizes disabledOverviewLabels by keeping only known plugin keys", () => {
+    const plugins: PluginMeta[] = [
+      { id: "a", name: "A", iconUrl: "", lines: [], primaryCandidates: [] },
+    ]
+    const normalized = normalizePluginSettings(
+      { order: [], disabled: [], disabledOverviewLabels: { "a": ["L1"], "unknown": ["L2"] } },
+      plugins
+    )
+    expect(normalized.disabledOverviewLabels).toEqual({ "a": ["L1"] })
   })
 
   it("keeps the mock plugin enabled when it is the only available shell-spike provider", () => {
@@ -114,11 +126,13 @@ describe("settings", () => {
   })
 
   it("compares settings equality", () => {
-    const a = { order: ["a"], disabled: [] }
-    const b = { order: ["a"], disabled: [] }
-    const c = { order: ["b"], disabled: [] }
+    const a: PluginSettings = { order: ["a"], disabled: [], disabledOverviewLabels: { "a": ["L1"] } }
+    const b: PluginSettings = { order: ["a"], disabled: [], disabledOverviewLabels: { "a": ["L1"] } }
+    const c: PluginSettings = { order: ["b"], disabled: [], disabledOverviewLabels: { "a": ["L1"] } }
+    const d: PluginSettings = { order: ["a"], disabled: [], disabledOverviewLabels: { "a": ["L2"] } }
     expect(arePluginSettingsEqual(a, b)).toBe(true)
     expect(arePluginSettingsEqual(a, c)).toBe(false)
+    expect(arePluginSettingsEqual(a, d)).toBe(false)
   })
 
   it("returns enabled plugin ids", () => {
