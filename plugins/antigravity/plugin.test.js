@@ -197,9 +197,40 @@ describe("antigravity plugin", () => {
 
     expect(result.plan).toBe("Pro")
 
-    // Model lines exist — 3 pool lines
+    // Model lines exist — Plan line + 3 pool lines + 3 plan credit lines
     const labels = result.lines.map((l) => l.label)
-    expect(labels).toEqual(["Gemini Pro", "Gemini Flash", "Claude"])
+    expect(labels).toEqual([
+      "Plan",
+      "Gemini Pro",
+      "Gemini Flash",
+      "Claude",
+      "Prompt Credits",
+      "Flow Credits",
+      "Flex Credits",
+    ])
+
+    const planLine = result.lines.find((l) => l.label === "Plan")
+    expect(planLine).toBeTruthy()
+    expect(planLine.type).toBe("text")
+    expect(planLine.value).toBe("Pro")
+
+    const promptCredits = result.lines.find((l) => l.label === "Prompt Credits")
+    expect(promptCredits).toBeTruthy()
+    expect(promptCredits.used).toBe(49500)
+    expect(promptCredits.limit).toBe(50000)
+    expect(promptCredits.format).toEqual({ kind: "count", suffix: "" })
+
+    const flowCredits = result.lines.find((l) => l.label === "Flow Credits")
+    expect(flowCredits).toBeTruthy()
+    expect(flowCredits.used).toBe(149900)
+    expect(flowCredits.limit).toBe(150000)
+    expect(flowCredits.format).toEqual({ kind: "count", suffix: "" })
+
+    const flexCredits = result.lines.find((l) => l.label === "Flex Credits")
+    expect(flexCredits).toBeTruthy()
+    expect(flexCredits.used).toBe(5000)
+    expect(flexCredits.limit).toBe(25000)
+    expect(flexCredits.format).toEqual({ kind: "count", suffix: "" })
   })
 
   it("uses Windows AppData DB lookup and Windows LS metadata on windows", async () => {
@@ -251,7 +282,7 @@ describe("antigravity plugin", () => {
   it("orders: Gemini (Pro, Flash), Claude (Opus, Sonnet), then others", async () => {
     const ctx = makeCtx()
     const discovery = makeDiscovery()
-    const response = makeUserStatusResponse()
+    const response = makeUserStatusResponse({ planStatus: null })
     setupLsMock(ctx, discovery, response)
 
     const plugin = await loadPlugin()
@@ -370,6 +401,7 @@ describe("antigravity plugin", () => {
     const ctx = makeCtx()
     const discovery = makeDiscovery()
     const response = makeUserStatusResponse({
+      planStatus: null,
       configs: [
         { label: "Gemini 3 Pro (High)", modelOrAlias: { model: "M7" } },
         { label: "Claude Opus 4.6 (Thinking)", modelOrAlias: { model: "M26" } },
@@ -389,6 +421,7 @@ describe("antigravity plugin", () => {
     const ctx = makeCtx()
     const discovery = makeDiscovery()
     const response = makeUserStatusResponse({
+      planStatus: null,
       configs: [
         { label: "Gemini 3 Pro (High)", modelOrAlias: { model: "M7" }, quotaInfo: { remainingFraction: 0.5, resetTime: "2026-02-08T09:10:56Z" } },
         { label: "", modelOrAlias: { model: "M99" }, quotaInfo: { remainingFraction: 0.8, resetTime: "2026-02-08T09:10:56Z" } },
@@ -1277,6 +1310,7 @@ describe("antigravity plugin", () => {
     const ctx = makeCtx()
     const discovery = makeDiscovery()
     const response = makeUserStatusResponse({
+      planStatus: null,
       configs: [
         {
           label: "Gemini 3 Pro (High)",

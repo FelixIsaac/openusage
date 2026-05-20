@@ -464,6 +464,56 @@
       var ps = data.userStatus.planStatus || {}
       var pi = ps.planInfo || {}
       plan = pi.planName || null
+
+      var promptLimit = pi.monthlyPromptCredits
+      var promptAvail = ps.availablePromptCredits
+      if (typeof promptLimit === "number" && typeof promptAvail === "number") {
+        var promptUsed = Math.max(0, promptLimit - promptAvail)
+        lines.push(
+          ctx.line.progress({
+            label: "Prompt Credits",
+            used: promptUsed,
+            limit: promptLimit,
+            format: { kind: "count", suffix: "" },
+          })
+        )
+      }
+
+      var flowLimit = pi.monthlyFlowCredits
+      var flowAvail = ps.availableFlowCredits
+      if (typeof flowLimit === "number" && typeof flowAvail === "number") {
+        var flowUsed = Math.max(0, flowLimit - flowAvail)
+        lines.push(
+          ctx.line.progress({
+            label: "Flow Credits",
+            used: flowUsed,
+            limit: flowLimit,
+            format: { kind: "count", suffix: "" },
+          })
+        )
+      }
+
+      var flexLimit = pi.monthlyFlexCreditPurchaseAmount
+      var flexUsed = ps.usedFlexCredits
+      if (typeof flexLimit === "number" && typeof flexUsed === "number") {
+        lines.push(
+          ctx.line.progress({
+            label: "Flex Credits",
+            used: flexUsed,
+            limit: flexLimit,
+            format: { kind: "count", suffix: "" },
+          })
+        )
+      }
+    }
+
+    if (plan) {
+      lines.unshift(
+        ctx.line.text({
+          label: "Plan",
+          value: plan,
+        })
+      )
     }
 
     return { plan: plan, lines: lines }
