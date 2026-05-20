@@ -291,6 +291,7 @@ describe("antigravity plugin", () => {
     const labels = result.lines.map((l) => l.label)
 
     expect(labels).toEqual(["Gemini Pro", "Gemini Flash", "Claude"])
+    expect(labels).not.toContain("Plan")
   })
 
   it("falls back to GetCommandModelConfigs when GetUserStatus fails", async () => {
@@ -324,6 +325,7 @@ describe("antigravity plugin", () => {
     const result = plugin.probe(ctx)
 
     expect(result.plan).toBeNull()
+    expect(result.lines.find((l) => l.label === "Plan")).toBeUndefined()
 
     // Model lines present
     const pro = result.lines.find((l) => l.label === "Gemini Pro")
