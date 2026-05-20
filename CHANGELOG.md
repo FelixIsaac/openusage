@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.6.15
+
+### New Features
+- Add active plan name display (e.g., "Pro") at the top of the Antigravity provider overview.
+
+### Bug Fixes
+- Block/retire the Gemini CLI/provider in the Windows provider support in favor of the new unified Antigravity CLI.
+
+### Chores
+- Bump Antigravity plugin version to `0.0.2`.
+
+---
+
+### Changelog
+
+**Full Changelog**: [v0.6.14...v0.6.15](https://github.com/Rana-Faraz/usage-tray-windows/compare/v0.6.14...v0.6.15)
+
 ## 0.6.14
 
 ### New Features
