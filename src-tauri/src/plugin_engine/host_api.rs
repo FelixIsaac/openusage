@@ -1680,7 +1680,7 @@ fn inject_ls<'js>(ctx: &Ctx<'js>, host: &Object<'js>, plugin_id: &str) -> rquick
                     let app_data =
                         ls_extract_flag(command, "--app_data_dir").map(|v| v.to_lowercase());
 
-                    let has_marker = markers_lower.iter().any(|m| {
+                    let has_marker = markers_lower.is_empty() || markers_lower.iter().any(|m| {
                         // Prefer exact flag match; skip path fallback when
                         // a distinguishing flag exists.
                         if let Some(ref name) = ide_name {
@@ -1760,11 +1760,15 @@ fn inject_ls<'js>(ctx: &Ctx<'js>, host: &Object<'js>, plugin_id: &str) -> rquick
                 };
 
                 // Extract CSRF token
-                let csrf = match ls_extract_flag(&command, &opts.csrf_flag) {
-                    Some(c) => c,
-                    None => {
-                        log::warn!("[plugin:{}] CSRF token not found in process args", pid);
-                        return Ok("null".to_string());
+                let csrf = if opts.csrf_flag.is_empty() {
+                    "".to_string()
+                } else {
+                    match ls_extract_flag(&command, &opts.csrf_flag) {
+                        Some(c) => c,
+                        None => {
+                            log::warn!("[plugin:{}] CSRF token not found in process args", pid);
+                            return Ok("null".to_string());
+                        }
                     }
                 };
 

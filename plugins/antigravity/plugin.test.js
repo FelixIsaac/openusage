@@ -272,7 +272,7 @@ describe("antigravity plugin", () => {
 
     expect(capturedCsrf).toBe("")
     expect(result.plan).toBe("Google AI Pro")
-    expect(result.lines.map((l) => l.label)).toEqual(["Gemini Pro", "Gemini Flash", "Claude"])
+    expect(result.lines.map((l) => l.label)).toEqual(["Flow Credits", "Prompt Credits", "Gemini Pro", "Gemini Flash", "Claude"])
   })
 
   it("returns models + plan from GetUserStatus", async () => {
@@ -289,7 +289,7 @@ describe("antigravity plugin", () => {
 
     // Model lines exist — 3 pool lines
     const labels = result.lines.map((l) => l.label)
-    expect(labels).toEqual(["Gemini Pro", "Gemini Flash", "Claude"])
+    expect(labels).toEqual(["Flow Credits", "Prompt Credits", "Gemini Pro", "Gemini Flash", "Claude"])
   })
 
   it("deduplicates models by normalized label (keeps worst-case fraction)", async () => {
@@ -318,7 +318,7 @@ describe("antigravity plugin", () => {
 
     const labels = result.lines.map((l) => l.label)
 
-    expect(labels).toEqual(["Gemini Pro", "Gemini Flash", "Claude"])
+    expect(labels).toEqual(["Flow Credits", "Prompt Credits", "Gemini Pro", "Gemini Flash", "Claude"])
   })
 
   it("falls back to GetCommandModelConfigs when GetUserStatus fails", async () => {
@@ -440,8 +440,10 @@ describe("antigravity plugin", () => {
     const result = plugin.probe(ctx)
     expect(result).toBeTruthy()
     const labels = result.lines.map((l) => l.label)
-    expect(labels).toEqual(["Gemini Pro", "Claude"])
-    expect(result.lines.every((l) => l.used === 100)).toBe(true)
+    expect(labels).toEqual(["Flow Credits", "Prompt Credits", "Gemini Pro", "Claude"])
+    // Only verify that model lines are 100% used, since prompt/flow credits used values are count-based (50000-500=49500 used out of 50000 limit, not 100%)
+    const modelLines = result.lines.filter(l => l.label !== "Flow Credits" && l.label !== "Prompt Credits")
+    expect(modelLines.every((l) => l.used === 100)).toBe(true)
   })
 
   it("skips configs with missing or empty labels", async () => {
@@ -458,8 +460,8 @@ describe("antigravity plugin", () => {
 
     const plugin = await loadPlugin()
     const result = plugin.probe(ctx)
-    expect(result.lines.length).toBe(1)
-    expect(result.lines[0].label).toBe("Gemini Pro")
+    expect(result.lines.length).toBe(3)
+    expect(result.lines[2].label).toBe("Gemini Pro")
   })
 
   it("includes resetsAt on model lines", async () => {
@@ -1420,7 +1422,7 @@ describe("antigravity plugin", () => {
     const result = plugin.probe(ctx)
 
     const labels = result.lines.map((l) => l.label)
-    expect(labels).toEqual(["Gemini Pro", "Claude"])
+    expect(labels).toEqual(["Flow Credits", "Prompt Credits", "Gemini Pro", "Claude"])
   })
 
   it("LS still takes priority over Cloud Code with DB tokens (no regression)", async () => {
@@ -1545,7 +1547,7 @@ describe("antigravity plugin", () => {
 
     expect(result.plan).toBe("Google AI Ultra")
     const labels = result.lines.map((l) => l.label)
-    expect(labels).toEqual(["Gemini Pro", "Gemini Flash", "Claude"])
+    expect(labels).toEqual(["Flow Credits", "Prompt Credits", "Gemini Pro", "Gemini Flash", "Claude"])
   })
 
   it("falls back to planInfo.planName when userTier is absent", async () => {
@@ -1718,5 +1720,32 @@ describe("antigravity plugin", () => {
     const plugin = await loadPlugin()
     expect(() => plugin.probe(ctx)).toThrow(LOGIN_MESSAGE)
     expect(refreshCalls).toBe(0)
+  })
+
+  it("includes Google One AI Credits when present in GetUserStatus userTier", async () => {
+    const ctx = makeCtx()
+    const discovery = makeDiscovery()
+    const response = makeUserStatusResponse({
+      userTier: {
+        id: "g1-pro-tier",
+        name: "Google AI Pro",
+        availableCredits: [
+          {
+            creditType: "GOOGLE_ONE_AI",
+            creditAmount: "30.0",
+          },
+        ],
+      },
+    })
+    setupLsMock(ctx, discovery, response)
+
+    const plugin = await loadPlugin()
+    const result = plugin.probe(ctx)
+
+    const labels = result.lines.map((l) => l.label)
+    expect(labels).toContain("Google One AI Credits")
+    const credsLine = result.lines.find((l) => l.label === "Google One AI Credits")
+    expect(credsLine.type).toBe("text")
+    expect(credsLine.value).toBe("30")
   })
 })

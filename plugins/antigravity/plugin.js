@@ -627,6 +627,53 @@
     var lines = buildModelLines(ctx, filtered)
     if (lines.length === 0) return null
 
+    if (hasUserStatus) {
+      var planStatus = data.userStatus.planStatus
+      if (planStatus) {
+        var planInfo = planStatus.planInfo || {}
+        var monthlyPrompt = planInfo.monthlyPromptCredits
+        var availablePrompt = planStatus.availablePromptCredits
+        if (typeof monthlyPrompt === "number" && typeof availablePrompt === "number") {
+          var usedPrompt = monthlyPrompt - availablePrompt
+          if (usedPrompt < 0) usedPrompt = 0
+          lines.unshift(ctx.line.progress({
+            label: "Prompt Credits",
+            used: usedPrompt,
+            limit: monthlyPrompt,
+            format: { kind: "count", suffix: "credits" },
+          }))
+        }
+        var monthlyFlow = planInfo.monthlyFlowCredits
+        var availableFlow = planStatus.availableFlowCredits
+        if (typeof monthlyFlow === "number" && typeof availableFlow === "number") {
+          var usedFlow = monthlyFlow - availableFlow
+          if (usedFlow < 0) usedFlow = 0
+          lines.unshift(ctx.line.progress({
+            label: "Flow Credits",
+            used: usedFlow,
+            limit: monthlyFlow,
+            format: { kind: "count", suffix: "credits" },
+          }))
+        }
+      }
+
+      var ut = data.userStatus.userTier
+      if (ut && Array.isArray(ut.availableCredits)) {
+        for (var c = 0; c < ut.availableCredits.length; c++) {
+          var cred = ut.availableCredits[c]
+          if (cred && cred.creditType === "GOOGLE_ONE_AI" && typeof cred.creditAmount === "string") {
+            var amount = parseFloat(cred.creditAmount)
+            if (!isNaN(amount)) {
+              lines.push(ctx.line.text({
+                label: "Google One AI Credits",
+                value: String(amount),
+              }))
+            }
+          }
+        }
+      }
+    }
+
     var plan = null
     if (hasUserStatus) {
       // Prefer userTier.name (Google's own subscription system) over the legacy
