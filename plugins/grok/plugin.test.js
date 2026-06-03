@@ -16,7 +16,7 @@ function writeAuth(ctx, entry) {
   auth["https://auth.x.ai::client"] = entry || {
     key: "test-token",
     email: "user@example.com",
-    expires_at: "2026-06-01T00:00:00Z",
+    expires_at: "2029-06-01T00:00:00Z",
   }
   ctx.host.fs.writeText(AUTH_PATH, JSON.stringify(auth))
 }
