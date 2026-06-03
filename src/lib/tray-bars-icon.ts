@@ -375,6 +375,27 @@ async function rasterizeSvgToRgba(svg: string, widthPx: number, heightPx: number
   }
 }
 
+const svgCache = new Map<string, string>()
+
+async function getSvgContent(url: string): Promise<string | null> {
+  if (svgCache.has(url)) {
+    return svgCache.get(url) || null
+  }
+  if (typeof window === "undefined" || typeof window.fetch !== "function") {
+    return null
+  }
+  try {
+    const res = await window.fetch(url)
+    if (!res.ok) return null
+    const text = await res.text()
+    svgCache.set(url, text)
+    return text
+  } catch (e) {
+    console.error("Failed to fetch SVG icon:", e)
+    return null
+  }
+}
+
 export async function renderTrayBarsIcon(args: {
   bars: TrayPrimaryBar[]
   sizePx: number
@@ -383,14 +404,24 @@ export async function renderTrayBarsIcon(args: {
   providerIconUrl?: string
   color?: string
 }): Promise<Image> {
-  const { bars, sizePx, style = "provider", percentText, providerIconUrl, color } = args
+  const { bars, sizePx, style = "provider", percentText, providerIconUrl, color = "black" } = args
   const text = normalizePercentText(percentText)
+
+  let resolvedIconUrl = providerIconUrl
+  if (providerIconUrl && providerIconUrl.trim().length > 0 && !providerIconUrl.startsWith("data:")) {
+    const svgText = await getSvgContent(providerIconUrl)
+    if (svgText) {
+      const coloredSvgText = svgText.replace(/currentColor/g, color)
+      resolvedIconUrl = `data:image/svg+xml;utf8,${encodeURIComponent(coloredSvgText)}`
+    }
+  }
+
   const svg = makeTrayBarsSvg({
     bars,
     sizePx,
     style,
     percentText: text,
-    providerIconUrl,
+    providerIconUrl: resolvedIconUrl,
     color,
   })
   const layout = getSvgLayout({
