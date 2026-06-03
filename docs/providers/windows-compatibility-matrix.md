@@ -9,6 +9,7 @@ This is the source of truth for Windows provider scope in `UsageTray`.
 - Cursor
 - GitHub Copilot
 - Grok
+- OpenRouter
 - Windsurf
 - Z.ai
 
@@ -22,6 +23,7 @@ These are the only providers that are in scope for the first Windows release. Ev
 | [Codex](./codex.md) | v1 wave | `%CODEX_HOME%/auth.json`, `%APPDATA%/codex/auth.json`, `%LOCALAPPDATA%/codex/auth.json`, `~/.codex/auth.json` | Codex local login, optional `ccusage` | File-based auth is the supported Windows path in v1. |
 | [Cursor](./cursor.md) | v1 wave | `%APPDATA%/Cursor/User/globalStorage/state.vscdb` | Cursor desktop app signed in, `sqlite3` | Real Windows path confirmed in development. |
 | [Grok](./grok.md) | v1 wave | `~/.grok/auth.json` | Grok CLI local login | Fully supported on Windows using home directory expansion. |
+| [OpenRouter](./openrouter.md) | v1 wave | `OPENROUTER_API_KEY` environment variable | Windows env vars | Supported in Windows, set env var and restart UsageTray. |
 | [Antigravity](./antigravity.md) | v1 wave | `%APPDATA%/Antigravity/User/globalStorage/state.vscdb`, `%APPDATA%/Antigravity IDE/User/globalStorage/state.vscdb` | Antigravity desktop app, `sqlite3` | Fully supported on Windows using dynamic AppData path resolution. |
 | [Windsurf](./windsurf.md) | v1 wave | `%APPDATA%/Windsurf/User/globalStorage/state.vscdb`, `%APPDATA%/Windsurf - Next/User/globalStorage/state.vscdb` | Windsurf desktop app, `sqlite3` | Fully supported on Windows using dynamic AppData path resolution. |
 | [JetBrains AI Assistant](./jetbrains-ai-assistant.md) | planned | `~/AppData/Roaming/JetBrains` | JetBrains IDE local data | Already has Windows-aware path logic; deferred until first wave is stable. |
