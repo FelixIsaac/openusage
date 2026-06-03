@@ -384,14 +384,23 @@ async function getSvgContent(url: string): Promise<string | null> {
   if (typeof window === "undefined" || typeof window.fetch !== "function") {
     return null
   }
+  // Check if it is likely an SVG path
+  const isSvg = url.split('?')[0].split('#')[0].toLowerCase().endsWith(".svg")
+  if (!isSvg) {
+    return null
+  }
+
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), 500)
   try {
-    const res = await window.fetch(url)
+    const res = await window.fetch(url, { signal: controller.signal })
+    clearTimeout(timeoutId)
     if (!res.ok) return null
     const text = await res.text()
     svgCache.set(url, text)
     return text
   } catch (e) {
-    console.error("Failed to fetch SVG icon:", e)
+    clearTimeout(timeoutId)
     return null
   }
 }
@@ -408,8 +417,26 @@ export async function renderTrayBarsIcon(args: {
   const text = normalizePercentText(percentText)
 
   let resolvedIconUrl = providerIconUrl
-  if (providerIconUrl && providerIconUrl.trim().length > 0 && !providerIconUrl.startsWith("data:")) {
-    const svgText = await getSvgContent(providerIconUrl)
+  if (providerIconUrl && providerIconUrl.trim().length > 0) {
+    let svgText: string | null = null
+    if (providerIconUrl.startsWith("data:image/svg+xml;base64,")) {
+      try {
+        const base64 = providerIconUrl.substring("data:image/svg+xml;base64,".length)
+        svgText = atob(base64)
+      } catch (e) {
+        console.error("Failed to decode base64 SVG:", e)
+      }
+    } else if (providerIconUrl.startsWith("data:image/svg+xml;utf8,")) {
+      try {
+        const raw = providerIconUrl.substring("data:image/svg+xml;utf8,".length)
+        svgText = decodeURIComponent(raw)
+      } catch (e) {
+        console.error("Failed to decode utf8 SVG:", e)
+      }
+    } else if (!providerIconUrl.startsWith("data:")) {
+      svgText = await getSvgContent(providerIconUrl)
+    }
+
     if (svgText) {
       const coloredSvgText = svgText.replace(/currentColor/g, color)
       resolvedIconUrl = `data:image/svg+xml;utf8,${encodeURIComponent(coloredSvgText)}`
