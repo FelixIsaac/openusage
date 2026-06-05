@@ -75,7 +75,7 @@ export const WINDOWS_PROVIDER_SUPPORT: Record<string, WindowsProviderSupport> = 
     status: "blocked",
     detectionStrategy: "Retired in favor of Antigravity CLI.",
     dependencies: ["None"],
-    note: "Gemini CLI has been retired in favor of the new unified Antigravity CLI. Please migrate your settings and track usage via the Antigravity provider.",
+    note: "Retired in favor of Antigravity. Please track usage via the Antigravity provider.",
   },
   "jetbrains-ai-assistant": {
     status: "planned",
@@ -164,6 +164,15 @@ export function getWindowsProviderAvailabilityNote(
     return {
       kind: "planned",
       title: "Planned for Windows",
+      message: support.note,
+      suppressError: true,
+    }
+  }
+
+  if (plugin.meta.id === "gemini") {
+    return {
+      kind: "blocked",
+      title: "Retired",
       message: support.note,
       suppressError: true,
     }
