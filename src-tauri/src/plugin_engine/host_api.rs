@@ -944,6 +944,43 @@ fn inject_env<'js>(ctx: &Ctx<'js>, host: &Object<'js>, _plugin_id: &str) -> rqui
     Ok(())
 }
 
+/// Process-wide cached blocking HTTP clients (one default, one TLS-ignoring), built once
+/// and reused for every plugin probe. Building a fresh `reqwest::blocking::Client` per
+/// request — as this code used to — spins up (and leaks) the client's internal tokio
+/// runtime worker thread plus its IOCP/socket handles on every poll, which accumulated at
+/// ~44 handles/hr on Windows. The per-request read timeout is applied on the RequestBuilder
+/// instead of the client, so caching the client does not change request-timeout behaviour
+/// (only connect_timeout is fixed, at 10s). Proxy is resolved once (config OnceLock), so it
+/// is safe to bake into the cached client.
+fn shared_http_client(ignore_tls: bool) -> reqwest::Result<reqwest::blocking::Client> {
+    static DEFAULT: OnceLock<reqwest::blocking::Client> = OnceLock::new();
+    static INSECURE: OnceLock<reqwest::blocking::Client> = OnceLock::new();
+
+    fn build(ignore_tls: bool) -> reqwest::Result<reqwest::blocking::Client> {
+        let mut builder = reqwest::blocking::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .redirect(reqwest::redirect::Policy::none());
+        if let Some(resolved) = crate::config::get_resolved_proxy() {
+            builder = builder.proxy(resolved.proxy.clone());
+        }
+        if ignore_tls {
+            builder = builder.danger_accept_invalid_certs(true);
+        }
+        builder.build()
+    }
+
+    let cell = if ignore_tls { &INSECURE } else { &DEFAULT };
+    match cell.get() {
+        Some(client) => Ok(client.clone()),
+        None => {
+            let client = build(ignore_tls)?;
+            // On a startup race the loser's client is dropped; the winner stays cached.
+            let _ = cell.set(client.clone());
+            Ok(cell.get().cloned().unwrap_or(client))
+        }
+    }
+}
+
 fn inject_http<'js>(ctx: &Ctx<'js>, host: &Object<'js>, plugin_id: &str) -> rquickjs::Result<()> {
     let http_obj = Object::new(ctx.clone())?;
     let pid = plugin_id.to_string();
@@ -982,24 +1019,10 @@ fn inject_http<'js>(ctx: &Ctx<'js>, host: &Object<'js>, plugin_id: &str) -> rqui
                 }
 
                 let timeout_ms = req.timeout_ms.unwrap_or(10_000);
-                let mut builder = reqwest::blocking::Client::builder()
-                    .timeout(std::time::Duration::from_millis(timeout_ms))
-                    .connect_timeout(std::time::Duration::from_millis(timeout_ms))
-                    .redirect(reqwest::redirect::Policy::none());
-
-                // Apply pre-resolved proxy (localhost bypass already configured)
-                if let Some(resolved) = crate::config::get_resolved_proxy() {
-                    builder = builder.proxy(resolved.proxy.clone());
-                    log::debug!("[http] proxy active");
-                } else {
-                    log::debug!("[http] proxy not used");
-                }
-
-                if req.dangerously_ignore_tls.unwrap_or(false) {
-                    builder = builder.danger_accept_invalid_certs(true);
-                }
-                let client = builder
-                    .build()
+                // Reuse a process-wide cached client (see shared_http_client). Building a
+                // fresh reqwest::blocking::Client per request leaked its internal tokio
+                // runtime thread + IOCP/socket handles on every poll (~44 handles/hr).
+                let client = shared_http_client(req.dangerously_ignore_tls.unwrap_or(false))
                     .map_err(|e| Exception::throw_message(&ctx_inner, &e.to_string()))?;
 
                 let method = req.method.as_deref().unwrap_or("GET");
@@ -1009,7 +1032,10 @@ fn inject_http<'js>(ctx: &Ctx<'js>, host: &Object<'js>, plugin_id: &str) -> rqui
                         &format!("invalid http method '{}': {}", method, e),
                     )
                 })?;
-                let mut builder = client.request(method, &req.url);
+                // Per-request read timeout on the builder (cached client fixes connect_timeout).
+                let mut builder = client
+                    .request(method, &req.url)
+                    .timeout(std::time::Duration::from_millis(timeout_ms));
                 builder = builder.headers(header_map);
                 if let Some(body) = req.body_text {
                     builder = builder.body(body);
