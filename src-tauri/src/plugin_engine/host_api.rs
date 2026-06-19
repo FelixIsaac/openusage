@@ -2446,6 +2446,114 @@ fn run_ccusage_with_runner(
         }
     }
 }
+fn convert_tu_to_ccusage(tu_json: &str) -> Option<String> {
+    let parsed: serde_json::Value = serde_json::from_str(tu_json).ok()?;
+    let daily_array = parsed.get("daily")?.as_array()?;
+
+    let mut mapped_daily = Vec::new();
+    for day in daily_array {
+        let date = day.get("date")?.as_str()?.to_string();
+        let totals = day.get("totals")?;
+
+        let input_tokens = totals.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+        let output_tokens = totals.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+        let cache_creation = totals.get("cache_creation_input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+        let cache_read = totals.get("cache_read_input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+        let total_tokens = totals.get("total_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+        let cost_usd = totals.get("cost_usd").and_then(|v| v.as_f64()).unwrap_or(0.0);
+
+        let mut models_used = Vec::new();
+        let mut model_breakdowns = Vec::new();
+
+        if let Some(models_obj) = day.get("models").and_then(|m| m.as_object()) {
+            for (model_name, model_data) in models_obj {
+                models_used.push(serde_json::Value::String(model_name.clone()));
+
+                let m_input = model_data.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                let m_output = model_data.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                let m_cache_creation = model_data.get("cache_creation_input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                let m_cache_read = model_data.get("cache_read_input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                let m_cost = model_data.get("cost_usd").and_then(|v| v.as_f64()).unwrap_or(0.0);
+
+                model_breakdowns.push(serde_json::json!({
+                    "modelName": model_name,
+                    "inputTokens": m_input,
+                    "outputTokens": m_output,
+                    "cacheCreationTokens": m_cache_creation,
+                    "cacheReadTokens": m_cache_read,
+                    "cost": m_cost
+                }));
+            }
+        }
+
+        mapped_daily.push(serde_json::json!({
+            "date": date,
+            "inputTokens": input_tokens,
+            "outputTokens": output_tokens,
+            "cacheCreationTokens": cache_creation,
+            "cacheReadTokens": cache_read,
+            "totalTokens": total_tokens,
+            "totalCost": cost_usd,
+            "modelsUsed": models_used,
+            "modelBreakdowns": model_breakdowns
+        }));
+    }
+
+    let res = serde_json::json!({
+        "daily": mapped_daily
+    });
+
+    serde_json::to_string(&res).ok()
+}
+
+fn run_tu_query(provider: CcusageProvider, opts: &CcusageQueryOpts) -> Option<String> {
+    let path = ccusage_enriched_path();
+    if !ccusage_runner_available("tu", path.as_deref()) {
+        return None;
+    }
+
+    let provider_name = match provider {
+        CcusageProvider::Claude => "claude",
+        CcusageProvider::Codex => "codex",
+    };
+
+    let mut args = vec![provider_name.to_string(), "daily".to_string(), "--json".to_string(), "--order".to_string(), "desc".to_string()];
+
+    if let Some(since) = opts.since.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        args.push("--since".to_string());
+        args.push(since.to_string());
+    }
+
+    if let Some(until) = opts.until.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        args.push("--until".to_string());
+        args.push(until.to_string());
+    }
+
+    if let Some(home_path) = ccusage_home_override(opts, provider) {
+        if provider == CcusageProvider::Claude {
+            args.push("--claude-projects-dir".to_string());
+            args.push(format!("{}/projects", home_path));
+        } else if provider == CcusageProvider::Codex {
+            args.push("--codex-sessions-dir".to_string());
+            args.push(format!("{}/sessions", home_path));
+        }
+    }
+
+    let mut command = std::process::Command::new("tu");
+    configure_background_command(&mut command);
+    command.args(&args);
+    if let Some(path_str) = path.as_deref() {
+        command.env("PATH", path_str);
+    }
+
+    let output = command.output().ok()?;
+    if output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        convert_tu_to_ccusage(&stdout)
+    } else {
+        None
+    }
+}
 
 fn inject_ccusage<'js>(
     ctx: &Ctx<'js>,
@@ -2468,6 +2576,14 @@ fn inject_ccusage<'js>(
                     }
                 };
                 let provider = resolve_ccusage_provider(&opts, &pid);
+
+                // Fast path: try querying via local "tu" binary if available
+                if let Some(tu_result) = run_tu_query(provider, &opts) {
+                    if let Some(data) = serde_json::from_str::<serde_json::Value>(&tu_result).ok() {
+                        return Ok(serde_json::json!({ "status": "ok", "data": data }).to_string());
+                    }
+                }
+
                 let runners = collect_ccusage_runners();
                 if runners.is_empty() {
                     log::warn!("[plugin:{}] no package runner found for ccusage query", pid);
