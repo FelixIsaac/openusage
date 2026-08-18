@@ -285,6 +285,12 @@ final class PricingBundledResourceTests: XCTestCase {
     func testGrokCLIModelAliases() {
         let pricing = Self.pricing
         XCTAssertEqual(pricing.resolve(model: "grok-build")?.inputPerMillion, 1)
+        XCTAssertEqual(pricing.resolve(model: "grok-code-fast-1")?.inputPerMillion, 1)
+        // grok-proxy is the CLI/proxy routing slug for the same Grok Build model.
+        XCTAssertEqual(pricing.resolve(model: "grok-proxy")?.inputPerMillion, 1)
+        XCTAssertEqual(pricing.resolve(model: "grok-proxy"), pricing.resolve(model: "grok-build-0.1"))
+        let tokens = TokenBreakdown(input: 1_000_000, output: 1_000_000)
+        XCTAssertEqual(pricing.estimatedCostDollars(model: "grok-proxy", tokens: tokens)!, 3.0, accuracy: 1e-9)
         XCTAssertEqual(pricing.resolve(model: "grok-composer-2.5-fast")?.inputPerMillion, 3)
     }
 
