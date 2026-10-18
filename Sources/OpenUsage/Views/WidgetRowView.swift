@@ -144,13 +144,15 @@ struct WidgetRowView: View {
                          accessibility: eta ?? "Will reach limit",
                          action: eta == nil ? nil : onToggleResetDisplay)
         case .closeToLimit(let spare, _):
-            Spacer(minLength: 8)
-            Text(spare)
-                .font(supportingFont)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .fixedSize(horizontal: true, vertical: false)
-                .hoverTooltip(state.tooltip)
+            if let spare {
+                Spacer(minLength: 8)
+                Text(spare)
+                    .font(supportingFont)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .hoverTooltip(state.tooltip)
+            }
         case .healthy where data.alwaysShowPacing:
             // "Always show pacing" surfaces the projection on the otherwise-silent on-track row: the
             // same quiet secondary note as the amber case, but the cushion ("~33% left at reset")

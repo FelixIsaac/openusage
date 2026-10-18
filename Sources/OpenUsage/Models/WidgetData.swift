@@ -83,6 +83,9 @@ struct WidgetData: Hashable {
     /// descriptors and carried through `WidgetDataStore.resolve`, so the treatment is a descriptor
     /// opt-in rather than a hardcoded widget-ID list in the model. `nil` for every other row.
     var sessionStartSignal: SessionStartSignal?
+    /// Comparable completed-cycle remaining-at-this-slot values for the seasonal/blend forecast.
+    /// Empty until the local quota ring has ≥2 matching windows; `Pace.evaluate` then falls back to linear.
+    var paceRemainders: [Double] = []
 
     /// How a session-window meter tells a not-yet-started window from an in-flight one.
     enum SessionStartSignal: Hashable {
@@ -137,6 +140,12 @@ struct WidgetData: Hashable {
         return min(max((limit - used) / limit, 0), 1)
     }
 
+    /// Elapsed share of the reset window, or `nil` when there is no window to measure.
+    func elapsedFraction(now: Date = Date()) -> Double? {
+        guard let ctx = paceContext else { return nil }
+        return now.timeIntervalSince(ctx.resetsAt.addingTimeInterval(-ctx.period)) / ctx.period
+    }
+
     /// Severity bands for the meter fill color (see `MeterState.severity`).
     enum MeterSeverity: Hashable {
         case normal, warning, critical
@@ -160,11 +169,11 @@ struct WidgetData: Hashable {
         /// misleading "0s" or a "~0% spare" amber bar. `projectedFraction` (projected end-of-period
         /// usage ÷ limit) backs the tooltip's overage / "lands at the limit" copy.
         case runningOut(eta: String?, projectedFraction: Double)
-        /// Projected to land inside the last 10% — cutting it close — but still with a cushion of at
-        /// least 1%. (A cushion that rounds to 0% promotes to `runningOut` instead, so amber never
-        /// shows "~0% spare".) Amber, a "~N% spare" note. `projectedFraction` backs the tooltip's
-        /// "% used at reset" copy.
-        case closeToLimit(spare: String, projectedFraction: Double)
+        /// Projected to land inside the last 10% — cutting it close — with a cushion of at least
+        /// 1%, or held back from `runningOut` by the empirical hit-rate gate (`spare == nil` when
+        /// projected over the limit so positive spare is never fabricated). Amber, optional
+        /// "~N% spare" note. `projectedFraction` backs the tooltip's reset projection copy.
+        case closeToLimit(spare: String?, projectedFraction: Double)
         /// On course to finish with ≥10% to spare. Blue. By default it carries no decoration; when
         /// "always show pacing" is on it surfaces the projection copy ("~N% left at reset").
         /// `projectedFraction` backs the tooltip's "% left at reset" cushion copy.
@@ -198,6 +207,10 @@ struct WidgetData: Hashable {
                 let left = Int(((1 - projectedFraction) * 100).rounded())
                 return "~\(left)% left at reset"
             case .closeToLimit(_, let projectedFraction):
+                if projectedFraction > 1 {
+                    let over = max(1, Int(((projectedFraction - 1) * 100).rounded()))
+                    return "~\(over)% over limit at reset"
+                }
                 let used = Int((projectedFraction * 100).rounded())
                 return "~\(used)% used at reset"
             case .runningOut(_, let projectedFraction):
@@ -505,27 +518,34 @@ extension WidgetData {
 
         if let ctx = paceContext,
            let result = Pace.evaluate(used: used, limit: ctx.limit, resetsAt: ctx.resetsAt,
-                                      periodDuration: ctx.period, now: now) {
+                                      periodDuration: ctx.period, now: now,
+                                      remainders: paceRemainders) {
+            let elapsed = now.timeIntervalSince(ctx.resetsAt.addingTimeInterval(-ctx.period))
+            let identifiable = Pace.isIdentifiable(used: used, limit: ctx.limit, elapsed: elapsed,
+                                                   periodDuration: ctx.period)
             switch result.status {
             case .ahead:
                 return .healthy(projectedFraction: result.projectedUsage / ctx.limit)
             case .onTrack:
-                // A whole-percent 1% reading at the projection gate can land exactly on the limit.
-                // Keep the same near-empty safeguard as `.behind` so it never becomes a red alarm.
-                guard used / ctx.limit >= 0.05 else { return absoluteLevelState(used: used, limit: limit) }
+                // Amber/red wait until elapsed is identifiable (25% session / 40% week) and used ≥ 5%.
+                // Early bursts otherwise look like a blow-out. Healthy (ahead) still paints.
+                guard identifiable else { return absoluteLevelState(used: used, limit: limit) }
                 let projected = result.projectedUsage / ctx.limit
                 let spare = Int(((1 - projected) * 100).rounded())
-                guard spare >= 1 else { return .runningOut(eta: nil, projectedFraction: projected) }
-                return .closeToLimit(spare: "~\(spare)% spare", projectedFraction: projected)
+                if spare >= 1 {
+                    return .closeToLimit(spare: "~\(spare)% spare", projectedFraction: projected)
+                }
+                // Projected over the limit, but held on `.onTrack` by the empirical hit-rate gate:
+                // keep the amber verdict without fabricating a positive spare percentage.
+                if result.projectedUsage > ctx.limit {
+                    return .closeToLimit(spare: nil, projectedFraction: projected)
+                }
+                return .runningOut(eta: nil, projectedFraction: projected)
             case .behind:
-                // Coarse whole-percent meters can read 1% used very early in a window; linear
-                // extrapolation then projects a bogus blow-out while the headline still shows ~99%
-                // left. When >95% of the quota clearly remains (used below
-                // 5%), distrust the projection entirely and use the absolute level bands instead — a
-                // calm bar with no projection copy, never a fabricated "~N% left at reset" cushion.
-                guard used / ctx.limit >= 0.05 else { return absoluteLevelState(used: used, limit: limit) }
+                guard identifiable else { return absoluteLevelState(used: used, limit: limit) }
                 let eta = Pace.secondsToRunOut(used: used, limit: ctx.limit, resetsAt: ctx.resetsAt,
-                                               periodDuration: ctx.period, now: now)
+                                               periodDuration: ctx.period, now: now,
+                                               remainders: paceRemainders)
                     .flatMap { Formatters.deadlineLabel("Limit", at: now.addingTimeInterval($0),
                                                         mode: resetDisplayMode, now: now) }
                 return .runningOut(eta: eta, projectedFraction: result.projectedUsage / ctx.limit)
